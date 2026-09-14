@@ -67,9 +67,7 @@ public sealed class LuminaSource : IDisposable
         IReadOnlyList<HarmoniaColumnDefinition> columns = rawSheet.Columns
             .Select((column, index) => new HarmoniaColumnDefinition(index, column.Offset, LuminaColumnTypeMapper.Map(column.Type)))
             .ToArray();
-        string effectiveLanguage = rawSheet.Language == Lumina.Data.Language.None
-            ? GameLanguageParser.ToCode(_language)
-            : GameLanguageParser.ToCode(rawSheet.Language);
+        string effectiveLanguage = GameLanguageParser.ToCode(rawSheet.Language);
         HarmoniaSheetInfo info = new(sheetName, harmoniaVariant, effectiveLanguage, columns);
         return harmoniaVariant == HarmoniaSheetVariant.DefaultRows
             ? new LuminaSheet(rawSheet, info, _gameData.Excel.GetSheet<RawRow>(_language, sheetName), null)

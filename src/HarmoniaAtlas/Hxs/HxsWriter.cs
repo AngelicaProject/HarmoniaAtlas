@@ -43,6 +43,9 @@ public sealed class HxsWriteSession : IDisposable
     private bool _metadataWritten;
     private bool _completed;
     private bool _disposed;
+    private bool _transactionDisposed;
+    private bool _commandsDisposed;
+    private bool _databaseDisposed;
 
     public HxsWriteSession(string targetPath)
     {
@@ -135,7 +138,16 @@ public sealed class HxsWriteSession : IDisposable
         }
         catch
         {
-            _database?.Dispose();
+            try
+            {
+                _database?.Dispose();
+            }
+            catch
+            {
+                // Preserve the constructor failure.
+            }
+
+            TryDeletePartial(_partialPath);
             throw;
         }
     }
@@ -244,8 +256,9 @@ public sealed class HxsWriteSession : IDisposable
         }
 
         _transaction.Commit();
+        DisposeTransaction();
         DisposeCommands();
-        _database.Dispose();
+        DisposeDatabase();
         FlushToDisk(_partialPath);
 
         HxsVerifier.Verify(_partialPath);
@@ -263,11 +276,15 @@ public sealed class HxsWriteSession : IDisposable
         _disposed = true;
         if (!_completed)
         {
-            _transaction.Dispose();
+            RollbackAndDisposeTransactionSafely();
         }
 
         DisposeCommands();
-        _database.Dispose();
+        DisposeDatabase();
+        if (!_completed)
+        {
+            TryDeletePartial(_partialPath);
+        }
     }
 
     private static readonly byte[] ZeroHash = new byte[32];
@@ -293,12 +310,87 @@ public sealed class HxsWriteSession : IDisposable
 
     private void DisposeCommands()
     {
-        _insertSheet.Dispose();
-        _insertColumn.Dispose();
-        _updateSheet.Dispose();
-        _insertRow.Dispose();
-        _insertStringCell.Dispose();
-        _insertMeta.Dispose();
+        if (_commandsDisposed)
+        {
+            return;
+        }
+
+        _commandsDisposed = true;
+        TryDispose(_insertSheet);
+        TryDispose(_insertColumn);
+        TryDispose(_updateSheet);
+        TryDispose(_insertRow);
+        TryDispose(_insertStringCell);
+        TryDispose(_insertMeta);
+    }
+
+    private void DisposeTransaction()
+    {
+        if (_transactionDisposed)
+        {
+            return;
+        }
+
+        _transaction.Dispose();
+        _transactionDisposed = true;
+    }
+
+    private void RollbackAndDisposeTransactionSafely()
+    {
+        if (_transactionDisposed)
+        {
+            return;
+        }
+
+        try
+        {
+            _transaction.Rollback();
+        }
+        catch
+        {
+            // Continue best-effort cleanup without hiding the original failure.
+        }
+
+        TryDispose(_transaction);
+        _transactionDisposed = true;
+    }
+
+    private void DisposeDatabase()
+    {
+        if (_databaseDisposed)
+        {
+            return;
+        }
+
+        _databaseDisposed = true;
+        TryDispose(_database);
+    }
+
+    private static void TryDispose(IDisposable disposable)
+    {
+        try
+        {
+            disposable.Dispose();
+        }
+        catch
+        {
+            // Cleanup must not hide an extraction or write failure.
+        }
+    }
+
+    private static void TryDeletePartial(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // An orphaned partial is preferable to hiding the original failure.
+        }
     }
 
     private void ThrowIfDisposed()

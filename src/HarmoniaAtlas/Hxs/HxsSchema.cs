@@ -97,6 +97,25 @@ internal static class HxsSchema
 
     public static void Validate(SqliteConnection connection)
     {
+        HashSet<string> expectedTables = RequiredColumns.Keys.ToHashSet(StringComparer.Ordinal);
+        using (SqliteCommand objectCommand = connection.CreateCommand())
+        {
+            objectCommand.CommandText =
+                "SELECT type, name FROM sqlite_master " +
+                "WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%' " +
+                "ORDER BY type, name;";
+            using SqliteDataReader reader = objectCommand.ExecuteReader();
+            while (reader.Read())
+            {
+                string objectType = reader.GetString(0);
+                string objectName = reader.GetString(1);
+                if (!string.Equals(objectType, "table", StringComparison.Ordinal) || !expectedTables.Contains(objectName))
+                {
+                    throw new HxsFormatException($"Unexpected HXS schema object: {objectType} {objectName}.");
+                }
+            }
+        }
+
         foreach ((string table, string[] columns) in RequiredColumns)
         {
             using SqliteCommand tableCommand = connection.CreateCommand();
@@ -116,12 +135,9 @@ internal static class HxsSchema
                 actualColumns.Add(reader.GetString(1));
             }
 
-            foreach (string column in columns)
+            if (actualColumns.Count != columns.Length || !actualColumns.SetEquals(columns))
             {
-                if (!actualColumns.Contains(column))
-                {
-                    throw new HxsFormatException($"Required HXS column is missing: {table}.{column}.");
-                }
+                throw new HxsFormatException($"HXS table '{table}' columns do not match the expected schema.");
             }
         }
     }

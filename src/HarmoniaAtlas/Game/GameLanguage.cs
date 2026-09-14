@@ -61,6 +61,7 @@ public static class GameLanguageParser
 
     public static string ToCode(Language language) => language switch
     {
+        Language.None => "none",
         Language.Japanese => "ja",
         Language.English => "en",
         Language.German => "de",

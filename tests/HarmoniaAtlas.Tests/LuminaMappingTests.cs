@@ -1,3 +1,4 @@
+using Lumina.Data;
 using Lumina.Data.Structs.Excel;
 using HarmoniaAtlas.Game;
 using HarmoniaAtlas.Model;
@@ -44,5 +45,16 @@ public sealed class LuminaMappingTests
     {
         Assert.Throws<NotSupportedException>(() => LuminaColumnTypeMapper.Map(ExcelColumnDataType.Unk));
         Assert.Throws<NotSupportedException>(() => LuminaColumnTypeMapper.Map(ExcelColumnDataType.Unk2));
+    }
+
+    [Theory]
+    [InlineData(Language.None, "none")]
+    [InlineData(Language.English, "en")]
+    [InlineData(Language.Japanese, "ja")]
+    [InlineData(Language.German, "de")]
+    [InlineData(Language.French, "fr")]
+    public void LuminaLanguagesMapToCanonicalCodes(Language language, string expectedCode)
+    {
+        Assert.Equal(expectedCode, GameLanguageParser.ToCode(language));
     }
 }

@@ -189,6 +189,74 @@ public sealed class HxsPipelineTests
     }
 
     [Fact]
+    public void VerifyRejectsExtraUserTable()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "CREATE TABLE extra_user_table (id INTEGER);");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void VerifyRejectsExtraView()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "CREATE VIEW extra_user_view AS SELECT name FROM sheets;");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void VerifyRejectsExtraTrigger()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "CREATE TRIGGER extra_user_trigger AFTER INSERT ON sheets BEGIN SELECT 1; END;");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void VerifyRejectsExtraColumn()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "ALTER TABLE sheets ADD COLUMN unexpected TEXT;");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
     public void VerifyRejectsTamperedRowDataAndHashes()
     {
         string dataPath = NewPath();
@@ -241,6 +309,27 @@ public sealed class HxsPipelineTests
         {
             Delete(path);
             Delete(path + ".partial");
+        }
+    }
+
+    [Fact]
+    public void FailedWriteSessionRemovesPartialOutput()
+    {
+        string path = NewPath();
+        try
+        {
+            using (HxsWriteSession session = new HxsWriter().Begin(path))
+            {
+                Assert.True(File.Exists(path + ".partial"));
+                Assert.Throws<InvalidOperationException>(() => session.Complete());
+            }
+
+            Assert.False(File.Exists(path));
+            Assert.False(File.Exists(path + ".partial"));
+        }
+        finally
+        {
+            Delete(path);
         }
     }
 
