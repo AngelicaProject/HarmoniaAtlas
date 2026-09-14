@@ -305,5 +305,7 @@ jobs:
             "release-assets/harmonia-atlas-v${APP_VERSION}-win-x64.zip" \
             "release-assets/harmonia-atlas-v${APP_VERSION}-linux-x64.tar.gz" \
             release-assets/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
             --title "Harmonia Atlas v${APP_VERSION}" \
             --generate-notes
