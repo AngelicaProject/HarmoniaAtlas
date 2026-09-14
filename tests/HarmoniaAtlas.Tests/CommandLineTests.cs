@@ -41,4 +41,22 @@ public sealed class CommandLineTests
         Assert.Equal(CliCommand.Inspect, result.Command);
         Assert.True(result.Options!.Json);
     }
+
+    [Fact]
+    public void VersionOptionIsRecognized()
+    {
+        CliParseResult result = CommandLineParser.Parse(["--version"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(CliCommand.Version, result.Command);
+    }
+
+    [Fact]
+    public void VersionCommandIsRecognized()
+    {
+        CliParseResult result = CommandLineParser.Parse(["version"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(CliCommand.Version, result.Command);
+    }
 }

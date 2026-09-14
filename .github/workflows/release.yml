@@ -1,0 +1,309 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate source and version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore HarmoniaAtlas.slnx
+
+      - name: Build
+        run: dotnet build HarmoniaAtlas.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test HarmoniaAtlas.slnx --configuration Release --no-build
+
+      - name: Read and validate application version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(dotnet run --project src/HarmoniaAtlas/HarmoniaAtlas.csproj --configuration Release --no-build --no-restore -- --version)"
+          if [[ -z "$app_version" ]]; then
+            echo "The application did not return a version." >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [[ "$app_version" != "$tag_version" ]]; then
+              echo "Tag version '$tag_version' does not match application version '$app_version'." >&2
+              exit 1
+            fi
+          fi
+
+          echo "version=$app_version" >> "$GITHUB_OUTPUT"
+
+  publish-windows:
+    name: Publish and smoke test (win-x64)
+    needs: validate
+    runs-on: windows-latest
+    env:
+      APP_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore application and smoke fixture
+        shell: pwsh
+        run: |
+          dotnet restore HarmoniaAtlas.slnx
+          dotnet restore tests/HarmoniaAtlas.SmokeFixture/HarmoniaAtlas.SmokeFixture.csproj
+
+      - name: Publish single-file application
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP 'harmonia-atlas-win-publish'
+          dotnet publish src/HarmoniaAtlas/HarmoniaAtlas.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            --output $publishDir `
+            --no-restore `
+            -p:PublishSingleFile=true `
+            -p:PublishTrimmed=false `
+            -p:PublishAot=false `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugSymbols=false `
+            -p:DebugType=None
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build smoke fixture
+        shell: pwsh
+        run: |
+          dotnet build tests/HarmoniaAtlas.SmokeFixture/HarmoniaAtlas.SmokeFixture.csproj --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke test published executable
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP 'harmonia-atlas-win-publish'
+          $executable = Join-Path $publishDir 'harmonia-atlas.exe'
+          $payloadFiles = @(Get-ChildItem -LiteralPath $publishDir -File | Select-Object -ExpandProperty Name)
+          if ($payloadFiles.Count -ne 1 -or $payloadFiles[0] -ne 'harmonia-atlas.exe') {
+            Write-Error "Unexpected publish payload: $($payloadFiles -join ', ')"
+            exit 1
+          }
+
+          $version = (& $executable --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -ne $env:APP_VERSION) {
+            Write-Error "Published --version returned '$version' with exit code $LASTEXITCODE."
+            exit 1
+          }
+
+          & $executable --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $fixture = Join-Path $env:RUNNER_TEMP 'synthetic.hxs'
+          dotnet run --project tests/HarmoniaAtlas.SmokeFixture/HarmoniaAtlas.SmokeFixture.csproj --configuration Release --no-build --no-restore -- $fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $executable verify $fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $inspectionPath = Join-Path $env:RUNNER_TEMP 'synthetic-inspection.json'
+          & $executable inspect $fixture --json | Set-Content -LiteralPath $inspectionPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath $inspectionPath)) { exit 1 }
+
+      - name: Package Windows archive
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP 'harmonia-atlas-win-publish'
+          $packageDir = Join-Path $env:RUNNER_TEMP 'harmonia-atlas-win-package'
+          $archivePath = Join-Path $env:RUNNER_TEMP "harmonia-atlas-v$env:APP_VERSION-win-x64.zip"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item -LiteralPath (Join-Path $publishDir 'harmonia-atlas.exe') -Destination $packageDir
+          Copy-Item -LiteralPath LICENSE -Destination $packageDir
+          Copy-Item -LiteralPath README.md -Destination $packageDir
+          Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $archivePath -Force
+
+      - name: Upload tested Windows archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmonia-atlas-win-x64-package
+          path: ${{ runner.temp }}/harmonia-atlas-v${{ needs.validate.outputs.version }}-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-linux:
+    name: Publish and smoke test (linux-x64)
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore application and smoke fixture
+        run: |
+          dotnet restore HarmoniaAtlas.slnx
+          dotnet restore tests/HarmoniaAtlas.SmokeFixture/HarmoniaAtlas.SmokeFixture.csproj
+
+      - name: Publish single-file application
+        run: |
+          publish_dir="$RUNNER_TEMP/harmonia-atlas-linux-publish"
+          dotnet publish src/HarmoniaAtlas/HarmoniaAtlas.csproj \
+            --configuration Release \
+            --runtime linux-x64 \
+            --self-contained true \
+            --output "$publish_dir" \
+            --no-restore \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=false \
+            -p:PublishAot=false \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugSymbols=false \
+            -p:DebugType=None
+
+      - name: Build smoke fixture
+        run: dotnet build tests/HarmoniaAtlas.SmokeFixture/HarmoniaAtlas.SmokeFixture.csproj --configuration Release --no-restore
+
+      - name: Smoke test published executable
+        run: |
+          set -euo pipefail
+          publish_dir="$RUNNER_TEMP/harmonia-atlas-linux-publish"
+          executable="$publish_dir/harmonia-atlas"
+          chmod +x "$executable"
+
+          mapfile -t payload_files < <(find "$publish_dir" -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [[ "${#payload_files[@]}" -ne 1 || "${payload_files[0]}" != 'harmonia-atlas' ]]; then
+            printf 'Unexpected publish payload: %s\n' "${payload_files[*]}" >&2
+            exit 1
+          fi
+
+          version="$($executable --version)"
+          if [[ "$version" != "$APP_VERSION" ]]; then
+            echo "Published --version returned '$version'." >&2
+            exit 1
+          fi
+          "$executable" --help >/dev/null
+
+          fixture="$RUNNER_TEMP/synthetic.hxs"
+          dotnet run --project tests/HarmoniaAtlas.SmokeFixture/HarmoniaAtlas.SmokeFixture.csproj --configuration Release --no-build --no-restore -- "$fixture"
+          "$executable" verify "$fixture"
+          "$executable" inspect "$fixture" --json > "$RUNNER_TEMP/synthetic-inspection.json"
+          test -s "$RUNNER_TEMP/synthetic-inspection.json"
+
+      - name: Package Linux archive
+        run: |
+          set -euo pipefail
+          publish_dir="$RUNNER_TEMP/harmonia-atlas-linux-publish"
+          package_dir="$RUNNER_TEMP/harmonia-atlas-linux-package"
+          archive_path="$RUNNER_TEMP/harmonia-atlas-v${APP_VERSION}-linux-x64.tar.gz"
+          mkdir -p "$package_dir"
+          cp "$publish_dir/harmonia-atlas" "$package_dir/harmonia-atlas"
+          chmod +x "$package_dir/harmonia-atlas"
+          cp LICENSE README.md "$package_dir/"
+          tar -czf "$archive_path" -C "$package_dir" harmonia-atlas LICENSE README.md
+
+      - name: Upload tested Linux archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmonia-atlas-linux-x64-package
+          path: ${{ runner.temp }}/harmonia-atlas-v${{ needs.validate.outputs.version }}-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Create release assets
+    needs:
+      - validate
+      - publish-windows
+      - publish-linux
+    outputs:
+      version: ${{ needs.validate.outputs.version }}
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Download tested Windows archive
+        uses: actions/download-artifact@v4
+        with:
+          name: harmonia-atlas-win-x64-package
+          path: ${{ runner.temp }}/downloaded/win
+
+      - name: Download tested Linux archive
+        uses: actions/download-artifact@v4
+        with:
+          name: harmonia-atlas-linux-x64-package
+          path: ${{ runner.temp }}/downloaded/linux
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/release-assets"
+          mkdir -p "$output_dir"
+          cp "$RUNNER_TEMP/downloaded/win/harmonia-atlas-v${APP_VERSION}-win-x64.zip" "$output_dir/"
+          cp "$RUNNER_TEMP/downloaded/linux/harmonia-atlas-v${APP_VERSION}-linux-x64.tar.gz" "$output_dir/"
+          (
+            cd "$output_dir"
+            sha256sum "harmonia-atlas-v${APP_VERSION}-win-x64.zip" "harmonia-atlas-v${APP_VERSION}-linux-x64.tar.gz" > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+      - name: Upload release assets for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmonia-atlas-v${{ needs.validate.outputs.version }}-release-assets
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  create-release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      APP_VERSION: ${{ needs.package.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download validated release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: harmonia-atlas-v${{ needs.package.outputs.version }}-release-assets
+          path: release-assets
+
+      - name: Create GitHub Release and upload assets
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "release-assets/harmonia-atlas-v${APP_VERSION}-win-x64.zip" \
+            "release-assets/harmonia-atlas-v${APP_VERSION}-linux-x64.tar.gz" \
+            release-assets/SHA256SUMS.txt \
+            --title "Harmonia Atlas v${APP_VERSION}" \
+            --generate-notes

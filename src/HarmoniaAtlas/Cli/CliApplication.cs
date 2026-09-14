@@ -7,19 +7,30 @@ namespace HarmoniaAtlas.Cli;
 public static class CliApplication
 {
     public static int Execute(CliParseResult parseResult)
+        => Execute(parseResult, Console.Out);
+
+    public static int Execute(CliParseResult parseResult, TextWriter output)
     {
         ArgumentNullException.ThrowIfNull(parseResult);
+        ArgumentNullException.ThrowIfNull(output);
         CliOptions options = parseResult.Options ?? new CliOptions();
         return parseResult.Command switch
         {
-            CliCommand.Extract => RunExtract(options),
-            CliCommand.Verify => RunVerify(options),
-            CliCommand.Inspect => RunInspect(options),
+            CliCommand.Version => RunVersion(output),
+            CliCommand.Extract => RunExtract(options, output),
+            CliCommand.Verify => RunVerify(options, output),
+            CliCommand.Inspect => RunInspect(options, output),
             _ => throw new InvalidOperationException("No executable CLI command was selected."),
         };
     }
 
-    private static int RunExtract(CliOptions options)
+    private static int RunVersion(TextWriter output)
+    {
+        output.WriteLine(AtlasApplicationVersion.Current);
+        return 0;
+    }
+
+    private static int RunExtract(CliOptions options, TextWriter output)
     {
         ExtractionSummary summary = new ExtractionEngine().Extract(
             options.GamePath!,
@@ -27,7 +38,7 @@ public static class CliApplication
             options.OutputPath!);
         if (options.Json)
         {
-            Console.WriteLine(JsonSerializer.Serialize(summary, new JsonSerializerOptions
+            output.WriteLine(JsonSerializer.Serialize(summary, new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 WriteIndented = true,
@@ -35,30 +46,30 @@ public static class CliApplication
         }
         else
         {
-            Console.WriteLine($"Game version: {summary.GameVersion}");
-            Console.WriteLine($"Language: {summary.Language}");
-            Console.WriteLine($"SnapshotId: {summary.SnapshotId}");
-            Console.WriteLine($"ContentId: {summary.ContentId}");
-            Console.WriteLine($"Sheet count: {summary.SheetCount}");
-            Console.WriteLine($"Row count: {summary.RowCount}");
-            Console.WriteLine($"String count: {summary.StringCount}");
-            Console.WriteLine($"Output path: {summary.OutputPath}");
+            output.WriteLine($"Game version: {summary.GameVersion}");
+            output.WriteLine($"Language: {summary.Language}");
+            output.WriteLine($"SnapshotId: {summary.SnapshotId}");
+            output.WriteLine($"ContentId: {summary.ContentId}");
+            output.WriteLine($"Sheet count: {summary.SheetCount}");
+            output.WriteLine($"Row count: {summary.RowCount}");
+            output.WriteLine($"String count: {summary.StringCount}");
+            output.WriteLine($"Output path: {summary.OutputPath}");
         }
 
         return 0;
     }
 
-    private static int RunVerify(CliOptions options)
+    private static int RunVerify(CliOptions options, TextWriter output)
     {
         HxsVerifier.Verify(options.HxsPath!);
-        Console.WriteLine("valid");
+        output.WriteLine("valid");
         return 0;
     }
 
-    private static int RunInspect(CliOptions options)
+    private static int RunInspect(CliOptions options, TextWriter output)
     {
         HxsInspection inspection = HxsInspector.Inspect(options.HxsPath!);
-        Console.WriteLine(options.Json ? inspection.ToJson() : inspection.ToText());
+        output.WriteLine(options.Json ? inspection.ToJson() : inspection.ToText());
         return 0;
     }
 }

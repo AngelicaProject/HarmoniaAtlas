@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>HarmoniaAtlas.SmokeFixture</AssemblyName>
+    <RootNamespace>HarmoniaAtlas.SmokeFixture</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\HarmoniaAtlas\HarmoniaAtlas.csproj" />
+  </ItemGroup>
+</Project>
