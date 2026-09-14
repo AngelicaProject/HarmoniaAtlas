@@ -3,6 +3,7 @@ namespace HarmoniaAtlas.Cli;
 public enum CliCommand
 {
     Help,
+    Version,
     Extract,
     Verify,
     Inspect,
@@ -27,6 +28,7 @@ public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, st
 public static class CliUsage
 {
     public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect> [options]" + Environment.NewLine +
+                                         "  harmonia-atlas --version" + Environment.NewLine +
                                          "  extract --game-path <path> --language <language> --output <path> [--json]" + Environment.NewLine +
                                          "  verify <path.hxs>" + Environment.NewLine +
                                          "  inspect <path.hxs> [--json]";
@@ -41,6 +43,11 @@ public static class CommandLineParser
         if (args.Count == 0 || IsHelp(args[0]))
         {
             return CliParseResult.Success(CliCommand.Help, new CliOptions());
+        }
+
+        if (args.Count == 1 && IsVersion(args[0]))
+        {
+            return CliParseResult.Success(CliCommand.Version, new CliOptions());
         }
 
         return args[0] switch
@@ -195,4 +202,6 @@ public static class CommandLineParser
     }
 
     private static bool IsHelp(string value) => value is "--help" or "-h" or "help";
+
+    private static bool IsVersion(string value) => value is "--version" or "version";
 }
