@@ -1,0 +1,198 @@
+namespace HarmoniaAtlas.Cli;
+
+public enum CliCommand
+{
+    Help,
+    Extract,
+    Verify,
+    Inspect,
+}
+
+public sealed record CliOptions(
+    string? GamePath = null,
+    string? Language = null,
+    string? OutputPath = null,
+    string? HxsPath = null,
+    bool Json = false);
+
+public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, string? Error)
+{
+    public static CliParseResult Success(CliCommand command, CliOptions options) =>
+        new(command, options, null);
+
+    public static CliParseResult Failure(string error) =>
+        new(null, null, error);
+}
+
+public static class CliUsage
+{
+    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect> [options]" + Environment.NewLine +
+                                         "  extract --game-path <path> --language <language> --output <path> [--json]" + Environment.NewLine +
+                                         "  verify <path.hxs>" + Environment.NewLine +
+                                         "  inspect <path.hxs> [--json]";
+}
+
+public static class CommandLineParser
+{
+    public static CliParseResult Parse(IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+
+        if (args.Count == 0 || IsHelp(args[0]))
+        {
+            return CliParseResult.Success(CliCommand.Help, new CliOptions());
+        }
+
+        return args[0] switch
+        {
+            "extract" => ParseExtract(args),
+            "verify" => ParseSinglePathCommand(args, CliCommand.Verify),
+            "inspect" => ParseInspect(args),
+            _ => CliParseResult.Failure($"unknown command '{args[0]}'"),
+        };
+    }
+
+    private static CliParseResult ParseExtract(IReadOnlyList<string> args)
+    {
+        string? gamePath = null;
+        string? language = null;
+        string? outputPath = null;
+        bool json = false;
+
+        for (int index = 1; index < args.Count; index++)
+        {
+            string option = args[index];
+            if (!TryReadValue(args, ref index, option, out string? value, out string? error))
+            {
+                return CliParseResult.Failure(error!);
+            }
+
+            switch (option)
+            {
+                case "--json":
+                    if (json)
+                    {
+                        return CliParseResult.Failure("--json was specified more than once");
+                    }
+
+                    json = true;
+                    break;
+                case "--game-path":
+                    if (gamePath is not null)
+                    {
+                        return CliParseResult.Failure("--game-path was specified more than once");
+                    }
+
+                    gamePath = value;
+                    break;
+                case "--language":
+                    if (language is not null)
+                    {
+                        return CliParseResult.Failure("--language was specified more than once");
+                    }
+
+                    language = value;
+                    break;
+                case "--output":
+                    if (outputPath is not null)
+                    {
+                        return CliParseResult.Failure("--output was specified more than once");
+                    }
+
+                    outputPath = value;
+                    break;
+                default:
+                    return CliParseResult.Failure($"unknown extract option '{option}'");
+            }
+        }
+
+        if (gamePath is null || language is null || outputPath is null)
+        {
+            return CliParseResult.Failure("extract requires --game-path, --language, and --output");
+        }
+
+        return CliParseResult.Success(
+            CliCommand.Extract,
+            new CliOptions(GamePath: gamePath, Language: language, OutputPath: outputPath, Json: json));
+    }
+
+    private static CliParseResult ParseSinglePathCommand(IReadOnlyList<string> args, CliCommand command)
+    {
+        if (args.Count != 2 || string.IsNullOrWhiteSpace(args[1]) || args[1].StartsWith("-", StringComparison.Ordinal))
+        {
+            return CliParseResult.Failure($"{command.ToString().ToLowerInvariant()} requires one .hxs path");
+        }
+
+        return CliParseResult.Success(command, new CliOptions(HxsPath: args[1]));
+    }
+
+    private static CliParseResult ParseInspect(IReadOnlyList<string> args)
+    {
+        string? path = null;
+        bool json = false;
+
+        for (int index = 1; index < args.Count; index++)
+        {
+            string argument = args[index];
+            if (argument == "--json")
+            {
+                if (json)
+                {
+                    return CliParseResult.Failure("--json was specified more than once");
+                }
+
+                json = true;
+                continue;
+            }
+
+            if (argument.StartsWith("-", StringComparison.Ordinal))
+            {
+                return CliParseResult.Failure($"unknown inspect option '{argument}'");
+            }
+
+            if (path is not null)
+            {
+                return CliParseResult.Failure("inspect requires one .hxs path");
+            }
+
+            path = argument;
+        }
+
+        return path is null
+            ? CliParseResult.Failure("inspect requires one .hxs path")
+            : CliParseResult.Success(CliCommand.Inspect, new CliOptions(HxsPath: path, Json: json));
+    }
+
+    private static bool TryReadValue(
+        IReadOnlyList<string> args,
+        ref int index,
+        string option,
+        out string? value,
+        out string? error)
+    {
+        value = null;
+        error = null;
+
+        if (option is not ("--game-path" or "--language" or "--output"))
+        {
+            return true;
+        }
+
+        if (index + 1 >= args.Count)
+        {
+            error = $"{option} requires a value";
+            return false;
+        }
+
+        value = args[++index];
+        if (string.IsNullOrWhiteSpace(value) || value.StartsWith("-", StringComparison.Ordinal))
+        {
+            error = $"{option} requires a value";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsHelp(string value) => value is "--help" or "-h" or "help";
+}

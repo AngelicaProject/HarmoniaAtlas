@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/HarmoniaAtlas/HarmoniaAtlas.csproj" />
+  <Project Path="tests/HarmoniaAtlas.Tests/HarmoniaAtlas.Tests.csproj" />
+</Solution>
