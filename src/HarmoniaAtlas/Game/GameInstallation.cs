@@ -9,6 +9,8 @@ public sealed record GameInstallation
 
     public string FullPath { get; }
 
+    public string SqpackPath => Path.Combine(FullPath, "game", "sqpack");
+
     public static GameInstallation FromPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -22,11 +24,12 @@ public sealed record GameInstallation
             throw new DirectoryNotFoundException($"The game path does not exist: {fullPath}");
         }
 
-        if (!Directory.Exists(Path.Combine(fullPath, "game", "sqpack")))
+        GameInstallation installation = new(fullPath);
+        if (!Directory.Exists(installation.SqpackPath))
         {
             throw new DirectoryNotFoundException("The supplied path is not a usable FFXIV installation: game/sqpack is missing.");
         }
 
-        return new GameInstallation(fullPath);
+        return installation;
     }
 }

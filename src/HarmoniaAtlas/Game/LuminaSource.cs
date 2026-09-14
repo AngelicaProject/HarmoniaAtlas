@@ -35,7 +35,7 @@ public sealed class LuminaSource : IDisposable
             DefaultExcelLanguage = luminaLanguage,
         };
 
-        GameData gameData = new(installation.FullPath, options);
+        GameData gameData = new(installation.SqpackPath, options);
         return new LuminaSource(installation, language, gameData);
     }
 
