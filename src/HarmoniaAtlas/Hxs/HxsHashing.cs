@@ -171,6 +171,7 @@ public static class HxsHashing
             foreach (HxsSheetRecord sheet in sheets.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
             {
                 hasher.WriteUtf8(sheet.Name);
+                hasher.WriteUtf8(sheet.EffectiveLanguage);
                 hasher.WriteBytes(sheet.SchemaHash);
                 hasher.WriteBytes(sheet.ContentHash);
             }

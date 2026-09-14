@@ -102,7 +102,7 @@ internal static class HxsSchema
         {
             objectCommand.CommandText =
                 "SELECT type, name FROM sqlite_master " +
-                "WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite_%' " +
+                "WHERE type IN ('table', 'view', 'trigger', 'index') AND name NOT GLOB 'sqlite_*' " +
                 "ORDER BY type, name;";
             using SqliteDataReader reader = objectCommand.ExecuteReader();
             while (reader.Read())
@@ -128,10 +128,15 @@ internal static class HxsSchema
 
             HashSet<string> actualColumns = new(StringComparer.Ordinal);
             using SqliteCommand columnCommand = connection.CreateCommand();
-            columnCommand.CommandText = $"PRAGMA table_info(\"{table}\");";
+            columnCommand.CommandText = $"PRAGMA table_xinfo(\"{table}\");";
             using SqliteDataReader reader = columnCommand.ExecuteReader();
             while (reader.Read())
             {
+                if (reader.GetInt32(6) != 0)
+                {
+                    throw new HxsFormatException($"HXS table '{table}' contains a hidden or generated column.");
+                }
+
                 actualColumns.Add(reader.GetString(1));
             }
 

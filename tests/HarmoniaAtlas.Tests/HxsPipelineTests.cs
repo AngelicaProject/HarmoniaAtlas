@@ -170,6 +170,20 @@ public sealed class HxsPipelineTests
     }
 
     [Fact]
+    public void ContentIdIncludesEffectiveLanguageAndIsDeterministic()
+    {
+        HxsSheetRecord sheet = SyntheticSheet(1, "one", "game");
+        HxsSheetRecord english = sheet with { EffectiveLanguage = "en" };
+        HxsSheetRecord japanese = sheet with { EffectiveLanguage = "ja" };
+
+        string first = HxsHashing.ComputeContentId("en", [english]);
+        string repeated = HxsHashing.ComputeContentId("en", [english]);
+
+        Assert.Equal(first, repeated);
+        Assert.NotEqual(first, HxsHashing.ComputeContentId("en", [japanese]));
+    }
+
+    [Fact]
     public void VerifyAcceptsGeneratedSyntheticArtifact()
     {
         string path = NewPath();
@@ -240,6 +254,23 @@ public sealed class HxsPipelineTests
     }
 
     [Fact]
+    public void VerifyRejectsExtraUserIndex()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "CREATE INDEX extra_index ON sheets(name);");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
     public void VerifyRejectsExtraColumn()
     {
         string path = NewPath();
@@ -247,6 +278,40 @@ public sealed class HxsPipelineTests
         {
             WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
             Tamper(path, "ALTER TABLE sheets ADD COLUMN unexpected TEXT;");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void VerifyRejectsGeneratedColumn()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "ALTER TABLE sheets ADD COLUMN generated_name TEXT GENERATED ALWAYS AS (name) VIRTUAL;");
+
+            Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
+        }
+        finally
+        {
+            Delete(path);
+        }
+    }
+
+    [Fact]
+    public void VerifyRejectsTamperedEffectiveLanguage()
+    {
+        string path = NewPath();
+        try
+        {
+            WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
+            Tamper(path, "UPDATE sheets SET effective_language = 'ja' WHERE name = 'Synthetic';");
 
             Assert.Throws<HxsFormatException>(() => HxsVerifier.Verify(path));
         }
