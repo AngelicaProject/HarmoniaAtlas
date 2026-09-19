@@ -17,6 +17,11 @@ public sealed class HxsReader : IDisposable
 
     public HxsMetadata Metadata => HxsQueries.ReadMetadata(_database.Connection);
 
+    public IReadOnlyList<HxsSheetRecord> ReadSheets() => HxsQueries.ReadSheets(_database.Connection);
+
+    public IEnumerable<HxsStringRowRecord> ReadStringRows(string sheetName) =>
+        HxsQueries.ReadStringRows(_database.Connection, sheetName);
+
     public static HxsReader Open(string path) => OpenReadOnly(path);
 
     public static HxsReader OpenReadOnly(string path)

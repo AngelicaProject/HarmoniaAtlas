@@ -35,6 +35,11 @@ public sealed record HxsRowRecord(
     byte[] StringHash,
     IReadOnlyList<HxsStringCellRecord> StringCells);
 
+public sealed record HxsStringRowRecord(
+    uint RowId,
+    ushort SubrowId,
+    IReadOnlyList<HxsStringCellRecord> StringCells);
+
 public sealed record HxsSheetRecord(
     string Name,
     HarmoniaSheetVariant Variant,

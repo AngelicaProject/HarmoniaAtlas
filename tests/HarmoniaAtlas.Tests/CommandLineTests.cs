@@ -59,4 +59,38 @@ public sealed class CommandLineTests
         Assert.Null(result.Error);
         Assert.Equal(CliCommand.Version, result.Command);
     }
+
+    [Fact]
+    public void GuidanceCommandAcceptsRepeatableInputsAndJson()
+    {
+        CliParseResult result = CommandLineParser.Parse(
+        [
+            "guidance",
+            "--input", "source-en.hxs",
+            "--input", "source-ja.hxs",
+            "--output", "source.hsg.json",
+            "--json",
+        ]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(CliCommand.Guidance, result.Command);
+        Assert.Equal(["source-en.hxs", "source-ja.hxs"], result.Options!.InputPaths);
+        Assert.Equal("source.hsg.json", result.Options.OutputPath);
+        Assert.True(result.Options.Json);
+    }
+
+    [Fact]
+    public void GuidanceCommandRejectsDuplicateInputPath()
+    {
+        CliParseResult result = CommandLineParser.Parse(
+        [
+            "guidance",
+            "--input", "source-en.hxs",
+            "--input", "source-en.hxs",
+            "--output", "source.hsg.json",
+        ]);
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("duplicated", result.Error, StringComparison.Ordinal);
+    }
 }

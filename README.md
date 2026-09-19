@@ -96,6 +96,21 @@ Verify a snapshot by recomputing its schema expectations, hashes, counts, `conte
 dotnet run --project src/HarmoniaAtlas -- verify source-en.hxs
 ```
 
+Generate a deterministic Harmonia Source Guidance sidecar from at least two verified HXS snapshots of the same game version:
+
+```bash
+dotnet run --project src/HarmoniaAtlas -- guidance \
+  --input source-en.hxs \
+  --input source-ja.hxs \
+  --input source-de.hxs \
+  --input source-fr.hxs \
+  --output ffxiv-2026.09.01.0000.0000.hsg.json
+```
+
+Guidance compares exact `macro_text` values at exact sheet/row/subrow/column coordinates. Only a column with positive official-language variance is `translatable`; `context`, `technical`, `unknown`, missing guidance, and incompatible guidance are read-only from a translation-safety perspective. A String cell is never writable merely because it is a String. Guidance is derived metadata: it does not change HXS identity, create translation identity, or become part of an `.hxs` file. It is generated fully offline and does not require EXDSchema or network access.
+
+The sidecar format and its fail-closed rules are specified in [`docs/SOURCE_GUIDANCE_FORMAT.md`](docs/SOURCE_GUIDANCE_FORMAT.md).
+
 Extraction also supports `--json` for structured command output. Diagnostics are written to stderr; command output is written to stdout.
 
 ## Building and testing
@@ -131,6 +146,7 @@ src/HarmoniaAtlas/
   Game/         game installation and Lumina boundary
   Extraction/   extraction pipeline and canonical row conversion
   Hxs/          HXS schema, hashing, reader/writer, verifier, inspector
+  Guidance/     multilingual eligibility analysis and HSG sidecar I/O
   Model/        Harmonia-owned source model
 
 tests/HarmoniaAtlas.Tests/

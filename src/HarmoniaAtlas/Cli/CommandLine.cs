@@ -7,6 +7,7 @@ public enum CliCommand
     Extract,
     Verify,
     Inspect,
+    Guidance,
 }
 
 public sealed record CliOptions(
@@ -14,7 +15,8 @@ public sealed record CliOptions(
     string? Language = null,
     string? OutputPath = null,
     string? HxsPath = null,
-    bool Json = false);
+    bool Json = false,
+    IReadOnlyList<string>? InputPaths = null);
 
 public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, string? Error)
 {
@@ -27,11 +29,12 @@ public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, st
 
 public static class CliUsage
 {
-    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect> [options]" + Environment.NewLine +
+    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect|guidance> [options]" + Environment.NewLine +
                                          "  harmonia-atlas --version" + Environment.NewLine +
                                          "  extract --game-path <path> --language <language> --output <path> [--json]" + Environment.NewLine +
                                          "  verify <path.hxs>" + Environment.NewLine +
-                                         "  inspect <path.hxs> [--json]";
+                                         "  inspect <path.hxs> [--json]" + Environment.NewLine +
+                                         "  guidance --input <path.hxs> --input <path.hxs> --output <path.hsg.json> [--json]";
 }
 
 public static class CommandLineParser
@@ -55,6 +58,7 @@ public static class CommandLineParser
             "extract" => ParseExtract(args),
             "verify" => ParseSinglePathCommand(args, CliCommand.Verify),
             "inspect" => ParseInspect(args),
+            "guidance" => ParseGuidance(args),
             _ => CliParseResult.Failure($"unknown command '{args[0]}'"),
         };
     }
@@ -167,7 +171,62 @@ public static class CommandLineParser
 
         return path is null
             ? CliParseResult.Failure("inspect requires one .hxs path")
-            : CliParseResult.Success(CliCommand.Inspect, new CliOptions(HxsPath: path, Json: json));
+             : CliParseResult.Success(CliCommand.Inspect, new CliOptions(HxsPath: path, Json: json));
+    }
+
+    private static CliParseResult ParseGuidance(IReadOnlyList<string> args)
+    {
+        List<string> inputPaths = new();
+        string? outputPath = null;
+        bool json = false;
+
+        for (int index = 1; index < args.Count; index++)
+        {
+            string option = args[index];
+            if (!TryReadValue(args, ref index, option, out string? value, out string? error))
+            {
+                return CliParseResult.Failure(error!);
+            }
+
+            switch (option)
+            {
+                case "--input":
+                    if (inputPaths.Contains(value!, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
+                    {
+                        return CliParseResult.Failure("guidance input paths must not be duplicated");
+                    }
+
+                    inputPaths.Add(value!);
+                    break;
+                case "--output":
+                    if (outputPath is not null)
+                    {
+                        return CliParseResult.Failure("--output was specified more than once");
+                    }
+
+                    outputPath = value;
+                    break;
+                case "--json":
+                    if (json)
+                    {
+                        return CliParseResult.Failure("--json was specified more than once");
+                    }
+
+                    json = true;
+                    break;
+                default:
+                    return CliParseResult.Failure($"unknown guidance option '{option}'");
+            }
+        }
+
+        if (inputPaths.Count < 2 || outputPath is null)
+        {
+            return CliParseResult.Failure("guidance requires at least two --input paths and --output");
+        }
+
+        return CliParseResult.Success(
+            CliCommand.Guidance,
+            new CliOptions(OutputPath: outputPath, Json: json, InputPaths: inputPaths));
     }
 
     private static bool TryReadValue(
@@ -180,7 +239,7 @@ public static class CommandLineParser
         value = null;
         error = null;
 
-        if (option is not ("--game-path" or "--language" or "--output"))
+        if (option is not ("--game-path" or "--language" or "--output" or "--input"))
         {
             return true;
         }
