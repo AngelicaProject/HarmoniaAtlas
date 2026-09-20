@@ -15,15 +15,18 @@ public static class SourceGuidanceHashing
             hasher.WriteUtf8(bundle.GameVersion);
             hasher.WriteUtf8(bundle.Scope);
 
-            SourceGuidanceInput[] inputs = bundle.Inputs
+            hasher.WriteUtf8(bundle.Source.Language);
+            hasher.WriteUtf8(bundle.Source.ContentId);
+            hasher.WriteUtf8(bundle.Source.SnapshotId);
+
+            SourceGuidanceEvidenceInput[] evidenceInputs = bundle.EvidenceInputs
                 .OrderBy(input => input.Language, StringComparer.Ordinal)
                 .ToArray();
-            hasher.WriteUInt32(checked((uint)inputs.Length));
-            foreach (SourceGuidanceInput input in inputs)
+            hasher.WriteUInt32(checked((uint)evidenceInputs.Length));
+            foreach (SourceGuidanceEvidenceInput input in evidenceInputs)
             {
                 hasher.WriteUtf8(input.Language);
-                hasher.WriteUtf8(input.ContentId);
-                hasher.WriteUtf8(input.SnapshotId);
+                hasher.WriteUtf8(input.EvidenceId);
             }
 
             SourceGuidanceSheet[] sheets = bundle.Sheets

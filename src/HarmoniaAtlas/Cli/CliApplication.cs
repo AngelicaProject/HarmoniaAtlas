@@ -77,7 +77,10 @@ public static class CliApplication
 
     private static int RunGuidance(CliOptions options, TextWriter output)
     {
-        SourceGuidanceSummary summary = new SourceGuidanceGenerator().Generate(options.InputPaths!, options.OutputPath!);
+        SourceGuidanceSummary summary = new SourceGuidanceGenerator().Generate(
+            options.SourcePath!,
+            options.ComparePaths!,
+            options.OutputPath!);
         if (options.Json)
         {
             output.WriteLine(JsonSerializer.Serialize(summary, new JsonSerializerOptions

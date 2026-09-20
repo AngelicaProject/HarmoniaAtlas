@@ -16,7 +16,8 @@ public sealed record CliOptions(
     string? OutputPath = null,
     string? HxsPath = null,
     bool Json = false,
-    IReadOnlyList<string>? InputPaths = null);
+    string? SourcePath = null,
+    IReadOnlyList<string>? ComparePaths = null);
 
 public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, string? Error)
 {
@@ -34,7 +35,7 @@ public static class CliUsage
                                          "  extract --game-path <path> --language <language> --output <path> [--json]" + Environment.NewLine +
                                          "  verify <path.hxs>" + Environment.NewLine +
                                          "  inspect <path.hxs> [--json]" + Environment.NewLine +
-                                         "  guidance --input <path.hxs> --input <path.hxs> --output <path.hsg.json> [--json]";
+                                         "  guidance --source <path.hxs> --compare <path.hxs> --output <path.hsg.json> [--json]";
 }
 
 public static class CommandLineParser
@@ -176,7 +177,9 @@ public static class CommandLineParser
 
     private static CliParseResult ParseGuidance(IReadOnlyList<string> args)
     {
-        List<string> inputPaths = new();
+        string? sourcePath = null;
+        List<string> comparePaths = new();
+        HashSet<string> seenPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         string? outputPath = null;
         bool json = false;
 
@@ -190,13 +193,25 @@ public static class CommandLineParser
 
             switch (option)
             {
-                case "--input":
-                    if (inputPaths.Contains(value!, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
+                case "--source":
+                    if (sourcePath is not null)
                     {
-                        return CliParseResult.Failure("guidance input paths must not be duplicated");
+                        return CliParseResult.Failure("--source was specified more than once");
                     }
 
-                    inputPaths.Add(value!);
+                    sourcePath = value;
+                    if (!seenPaths.Add(Path.GetFullPath(value!)))
+                    {
+                        return CliParseResult.Failure("guidance source and comparison paths must not be duplicated");
+                    }
+                    break;
+                case "--compare":
+                    if (!seenPaths.Add(Path.GetFullPath(value!)))
+                    {
+                        return CliParseResult.Failure("guidance source and comparison paths must not be duplicated");
+                    }
+
+                    comparePaths.Add(value!);
                     break;
                 case "--output":
                     if (outputPath is not null)
@@ -219,14 +234,14 @@ public static class CommandLineParser
             }
         }
 
-        if (inputPaths.Count < 2 || outputPath is null)
+        if (sourcePath is null || comparePaths.Count == 0 || outputPath is null)
         {
-            return CliParseResult.Failure("guidance requires at least two --input paths and --output");
+            return CliParseResult.Failure("guidance requires one --source path, at least one --compare path, and --output");
         }
 
         return CliParseResult.Success(
             CliCommand.Guidance,
-            new CliOptions(OutputPath: outputPath, Json: json, InputPaths: inputPaths));
+            new CliOptions(OutputPath: outputPath, Json: json, SourcePath: sourcePath, ComparePaths: comparePaths));
     }
 
     private static bool TryReadValue(
@@ -239,7 +254,7 @@ public static class CommandLineParser
         value = null;
         error = null;
 
-        if (option is not ("--game-path" or "--language" or "--output" or "--input"))
+        if (option is not ("--game-path" or "--language" or "--output" or "--source" or "--compare"))
         {
             return true;
         }

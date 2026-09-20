@@ -2,12 +2,13 @@ namespace HarmoniaAtlas.Guidance;
 
 public sealed class SourceGuidanceGenerator
 {
-    public SourceGuidanceSummary Generate(IReadOnlyList<string> inputPaths, string outputPath)
+    public SourceGuidanceSummary Generate(string sourcePath, IReadOnlyList<string> comparePaths, string outputPath)
     {
-        ArgumentNullException.ThrowIfNull(inputPaths);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentNullException.ThrowIfNull(comparePaths);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
 
-        SourceGuidanceBundle bundle = new SourceGuidanceAnalyzer().Analyze(inputPaths);
+        SourceGuidanceBundle bundle = new SourceGuidanceAnalyzer().Analyze(sourcePath, comparePaths);
         SourceGuidanceWriter.Write(bundle, outputPath);
         return Summarize(bundle, Path.GetFullPath(outputPath));
     }
@@ -19,7 +20,7 @@ public sealed class SourceGuidanceGenerator
         return new SourceGuidanceSummary(
             bundle.GameVersion,
             bundle.Scope,
-            bundle.Inputs.Select(input => input.Language).ToArray(),
+            bundle.EvidenceInputs.Select(input => input.Language).ToArray(),
             bundle.Sheets.Count(sheet => sheet.Status == SourceGuidanceSheetStatus.Compatible),
             bundle.Sheets.Count(sheet => sheet.Status == SourceGuidanceSheetStatus.Incompatible),
             checked(bundle.Sheets.Sum(sheet => sheet.Translatable.Count)),

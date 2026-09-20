@@ -96,14 +96,14 @@ Verify a snapshot by recomputing its schema expectations, hashes, counts, `conte
 dotnet run --project src/HarmoniaAtlas -- verify source-en.hxs
 ```
 
-Generate a deterministic Harmonia Source Guidance sidecar from at least two verified HXS snapshots of the same game version:
+Generate a deterministic Harmonia Source Guidance sidecar from one verified source HXS and one or more verified comparison HXS files of the same game version:
 
 ```bash
 dotnet run --project src/HarmoniaAtlas -- guidance \
-  --input source-en.hxs \
-  --input source-ja.hxs \
-  --input source-de.hxs \
-  --input source-fr.hxs \
+  --source source-en.hxs \
+  --compare source-ja.hxs \
+  --compare source-de.hxs \
+  --compare source-fr.hxs \
   --output ffxiv-2026.09.01.0000.0000.hsg.json
 ```
 

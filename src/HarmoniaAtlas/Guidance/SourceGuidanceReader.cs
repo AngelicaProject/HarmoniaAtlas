@@ -34,13 +34,14 @@ public static class SourceGuidanceReader
     {
         ArgumentNullException.ThrowIfNull(bundle);
         if (bundle.FormatVersion != 1 || string.IsNullOrWhiteSpace(bundle.GameVersion) ||
-            string.IsNullOrWhiteSpace(bundle.Scope) || bundle.Inputs is null || bundle.Sheets is null ||
+            string.IsNullOrWhiteSpace(bundle.Scope) || bundle.Source is null || bundle.EvidenceInputs is null || bundle.Sheets is null ||
             !SourceGuidanceHashing.IsSha256(bundle.BundleId))
         {
             throw new SourceGuidanceFormatException("Source guidance metadata is invalid.");
         }
 
-        ValidateInputs(bundle.Inputs);
+        ValidateSource(bundle.Source);
+        ValidateEvidenceInputs(bundle.EvidenceInputs, bundle.Source.Language);
         string? previousSheet = null;
         foreach (SourceGuidanceSheet sheet in bundle.Sheets)
         {
@@ -70,26 +71,49 @@ public static class SourceGuidanceReader
         }
     }
 
-    private static void ValidateInputs(IReadOnlyList<SourceGuidanceInput> inputs)
+    private static void ValidateSource(SourceGuidanceSourceIdentity source)
     {
-        if (inputs.Count < 2)
+        if (!SourceGuidanceLanguages.IsCanonicalSourceLanguage(source.Language) ||
+            !SourceGuidanceHashing.IsSha256(source.ContentId) ||
+            !SourceGuidanceHashing.IsSha256(source.SnapshotId))
         {
-            throw new SourceGuidanceFormatException("Source guidance requires at least two inputs.");
+            throw new SourceGuidanceFormatException("Source guidance source identity is invalid.");
+        }
+    }
+
+    private static void ValidateEvidenceInputs(
+        IReadOnlyList<SourceGuidanceEvidenceInput> evidenceInputs,
+        string sourceLanguage)
+    {
+        if (evidenceInputs.Count < 2)
+        {
+            throw new SourceGuidanceFormatException("Source guidance requires at least two evidence inputs.");
         }
 
         string? previousLanguage = null;
         HashSet<string> languages = new(StringComparer.Ordinal);
-        foreach (SourceGuidanceInput input in inputs)
+        int sourceLanguageCount = 0;
+        foreach (SourceGuidanceEvidenceInput input in evidenceInputs)
         {
-            if (input is null || string.IsNullOrWhiteSpace(input.Language) ||
-                !SourceGuidanceHashing.IsSha256(input.ContentId) || !SourceGuidanceHashing.IsSha256(input.SnapshotId) ||
+            if (input is null || !SourceGuidanceLanguages.IsCanonicalSourceLanguage(input.Language) ||
+                !SourceGuidanceHashing.IsSha256(input.EvidenceId) ||
                 !languages.Add(input.Language) ||
                 (previousLanguage is not null && string.CompareOrdinal(previousLanguage, input.Language) >= 0))
             {
-                throw new SourceGuidanceFormatException("Source guidance inputs are invalid or not in ordinal language order.");
+                throw new SourceGuidanceFormatException("Source guidance evidence inputs are invalid or not in ordinal language order.");
+            }
+
+            if (string.Equals(input.Language, sourceLanguage, StringComparison.Ordinal))
+            {
+                sourceLanguageCount++;
             }
 
             previousLanguage = input.Language;
+        }
+
+        if (sourceLanguageCount != 1)
+        {
+            throw new SourceGuidanceFormatException("Source guidance evidence inputs must contain the source language exactly once.");
         }
     }
 

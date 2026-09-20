@@ -5,57 +5,63 @@ namespace HarmoniaAtlas.Guidance;
 
 public sealed class SourceGuidanceAnalyzer
 {
-    public SourceGuidanceBundle Analyze(IReadOnlyList<string> inputPaths)
+    public SourceGuidanceBundle Analyze(string sourcePath, IReadOnlyList<string> comparePaths)
     {
-        ArgumentNullException.ThrowIfNull(inputPaths);
-        if (inputPaths.Count < 2)
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentNullException.ThrowIfNull(comparePaths);
+        if (comparePaths.Count == 0)
         {
-            throw new SourceGuidanceException("Source guidance requires at least two HXS inputs.");
+            throw new SourceGuidanceException("Source guidance requires at least one comparison HXS input.");
         }
 
-        List<string> normalizedPaths = inputPaths.Select(Path.GetFullPath).ToList();
+        List<string> normalizedPaths = new[] { sourcePath }
+            .Concat(comparePaths)
+            .Select(Path.GetFullPath)
+            .ToList();
         StringComparer pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         if (normalizedPaths.Count != normalizedPaths.Distinct(pathComparer).Count())
         {
-            throw new SourceGuidanceException("Source guidance inputs must not contain duplicate paths.");
+            throw new SourceGuidanceException("Source guidance source and comparison paths must be distinct.");
         }
 
         List<VerifiedInput> verifiedInputs = normalizedPaths.Select(VerifyInput).ToList();
+        VerifiedInput sourceInput = verifiedInputs[0];
         if (verifiedInputs.Select(input => input.Metadata.Language).Distinct(StringComparer.Ordinal).Count() != verifiedInputs.Count)
         {
-            throw new SourceGuidanceException("Source guidance inputs must have distinct hxs_meta.language values.");
+            throw new SourceGuidanceException("Source guidance HXS languages must be distinct.");
         }
 
-        VerifiedInput first = verifiedInputs[0];
         foreach (VerifiedInput input in verifiedInputs.Skip(1))
         {
-            if (!string.Equals(first.Metadata.GameVersion, input.Metadata.GameVersion, StringComparison.Ordinal))
+            if (!string.Equals(sourceInput.Metadata.GameVersion, input.Metadata.GameVersion, StringComparison.Ordinal))
             {
                 throw new SourceGuidanceException(
-                    $"Source guidance inputs must use the same game_version; '{first.Metadata.GameVersion}' and '{input.Metadata.GameVersion}' differ.");
+                    $"Source guidance HXS inputs must use the same game_version; '{sourceInput.Metadata.GameVersion}' and '{input.Metadata.GameVersion}' differ.");
             }
 
-            if (!string.Equals(first.Metadata.Scope, input.Metadata.Scope, StringComparison.Ordinal))
+            if (!string.Equals(sourceInput.Metadata.Scope, input.Metadata.Scope, StringComparison.Ordinal))
             {
                 throw new SourceGuidanceException(
-                    $"Source guidance inputs must use the same scope; '{first.Metadata.Scope}' and '{input.Metadata.Scope}' differ.");
+                    $"Source guidance HXS inputs must use the same scope; '{sourceInput.Metadata.Scope}' and '{input.Metadata.Scope}' differ.");
             }
         }
 
-        verifiedInputs = verifiedInputs
+        List<VerifiedInput> orderedInputs = verifiedInputs
             .OrderBy(input => input.Metadata.Language, StringComparer.Ordinal)
             .ToList();
 
         List<OpenInput> openInputs = new();
         try
         {
-            foreach (VerifiedInput input in verifiedInputs)
+            foreach (VerifiedInput input in orderedInputs)
             {
                 HxsReader reader = HxsReader.OpenReadOnly(input.Path);
                 try
                 {
                     IReadOnlyList<HxsSheetRecord> sheets = reader.ReadSheets();
-                    openInputs.Add(new OpenInput(input, reader, sheets.ToDictionary(sheet => sheet.Name, StringComparer.Ordinal)));
+                    IReadOnlyDictionary<string, HxsSheetRecord> sheetsByName = sheets.ToDictionary(sheet => sheet.Name, StringComparer.Ordinal);
+                    string evidenceId = ComputeEvidenceId(input, reader, sheets);
+                    openInputs.Add(new OpenInput(input, reader, sheetsByName, evidenceId));
                 }
                 catch
                 {
@@ -64,22 +70,34 @@ public sealed class SourceGuidanceAnalyzer
                 }
             }
 
+            OpenInput sourceOpenInput = openInputs.Single(input =>
+                pathComparer.Equals(input.Verified.Path, sourceInput.Path));
             SourceGuidanceSheet[] guidanceSheets = openInputs
                 .SelectMany(input => input.Sheets.Keys)
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(name => name, StringComparer.Ordinal)
-                .Select(sheetName => AnalyzeSheet(sheetName, openInputs))
+                .Select(sheetName => AnalyzeSheet(sheetName, sourceOpenInput, openInputs))
                 .ToArray();
 
-            SourceGuidanceInput[] guidanceInputs = verifiedInputs
-                .Select(input => new SourceGuidanceInput(input.Metadata.Language, input.Metadata.ContentId, input.Metadata.SnapshotId))
+            SourceGuidanceSourceIdentity sourceIdentity = new(
+                sourceInput.Metadata.Language,
+                sourceInput.Metadata.ContentId,
+                sourceInput.Metadata.SnapshotId);
+            SourceGuidanceEvidenceInput[] evidenceInputs = orderedInputs
+                .Select(input =>
+                {
+                    OpenInput openInput = openInputs.Single(candidate =>
+                        pathComparer.Equals(candidate.Verified.Path, input.Path));
+                    return new SourceGuidanceEvidenceInput(input.Metadata.Language, openInput.EvidenceId);
+                })
                 .ToArray();
             SourceGuidanceBundle withoutBundleId = new(
                 1,
-                first.Metadata.GameVersion,
-                first.Metadata.Scope,
+                sourceInput.Metadata.GameVersion,
+                sourceInput.Metadata.Scope,
                 string.Empty,
-                guidanceInputs,
+                sourceIdentity,
+                evidenceInputs,
                 guidanceSheets);
             return withoutBundleId with { BundleId = SourceGuidanceHashing.ComputeBundleId(withoutBundleId) };
         }
@@ -116,18 +134,53 @@ public sealed class SourceGuidanceAnalyzer
         }
     }
 
-    private static SourceGuidanceSheet AnalyzeSheet(string sheetName, IReadOnlyList<OpenInput> inputs)
+    private static string ComputeEvidenceId(
+        VerifiedInput input,
+        HxsReader reader,
+        IReadOnlyList<HxsSheetRecord> sheets)
+    {
+        using SourceGuidanceEvidenceHasher hasher = new(
+            input.Metadata.GameVersion,
+            input.Metadata.Scope,
+            input.Metadata.Language);
+        foreach (HxsSheetRecord sheet in sheets.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
+        {
+            hasher.AddSheet(sheet.Name, sheet.Variant, sheet.SchemaHash);
+            foreach (HxsStringRowRecord row in reader.ReadStringRows(sheet.Name))
+            {
+                hasher.AddRow(row.RowId, row.SubrowId);
+                foreach (HxsStringOccurrenceValue value in row.Values)
+                {
+                    hasher.AddStringOccurrence(value.ColumnIndex, value.MacroText);
+                }
+            }
+        }
+
+        return hasher.ComputeEvidenceId();
+    }
+
+    private static SourceGuidanceSheet AnalyzeSheet(
+        string sheetName,
+        OpenInput sourceInput,
+        IReadOnlyList<OpenInput> inputs)
     {
         List<OpenInput> presentInputs = inputs.Where(input => input.Sheets.ContainsKey(sheetName)).ToList();
-        HxsSheetRecord representative = presentInputs[0].Sheets[sheetName];
+        OpenInput representativeInput = sourceInput.Sheets.ContainsKey(sheetName) ? sourceInput : presentInputs[0];
+        HxsSheetRecord representative = representativeInput.Sheets[sheetName];
         List<SourceGuidanceIncompatibilityReason> reasons = new();
         if (presentInputs.Count != inputs.Count)
         {
             reasons.Add(SourceGuidanceIncompatibilityReason.MissingInInput);
         }
 
-        foreach (HxsSheetRecord sheet in presentInputs.Skip(1).Select(input => input.Sheets[sheetName]))
+        foreach (OpenInput input in presentInputs)
         {
+            if (ReferenceEquals(input, representativeInput))
+            {
+                continue;
+            }
+
+            HxsSheetRecord sheet = input.Sheets[sheetName];
             if (sheet.Variant != representative.Variant)
             {
                 reasons.Add(SourceGuidanceIncompatibilityReason.SheetVariantMismatch);
@@ -275,5 +328,6 @@ public sealed class SourceGuidanceAnalyzer
     private sealed record OpenInput(
         VerifiedInput Verified,
         HxsReader Reader,
-        IReadOnlyDictionary<string, HxsSheetRecord> Sheets);
+        IReadOnlyDictionary<string, HxsSheetRecord> Sheets,
+        string EvidenceId);
 }

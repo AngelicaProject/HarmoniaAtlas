@@ -1,18 +1,16 @@
 # Harmonia Source Guidance Format v1
 
-Harmonia Source Guidance (HSG) is a deterministic JSON sidecar generated from two or more verified Harmonia Source Snapshots (HXS) for one game version. It is a sparse positive allowlist of exact physical String occurrences that have multilingual localization evidence.
-
-An occurrence is writable only when it is present in the allowlist. Absence means read-only.
+Harmonia Source Guidance (HSG) is deterministic JSON metadata that grants translation permission for exact physical String occurrences in one source HXS. It is derived from multilingual source data and contains a sparse positive allowlist. An occurrence absent from the allowlist is read-only.
 
 ## Purpose
 
-HSG identifies source occurrences using the physical HXS coordinate:
+HSG identifies an occurrence by its physical HXS coordinate:
 
 ```text
 sheet name + row_id + subrow_id + column_index
 ```
 
-It does not persist source text, translation state, semantic field labels, or UI presentation information. It is derived metadata and does not change HXS identity.
+HSG stores the exact identity of the source HXS and lightweight fingerprints for the evidence used to compare languages. It does not store source text, translation state, semantic field labels, or blocked-cell records.
 
 ## File structure
 
@@ -24,16 +22,27 @@ An HSG v1 file has this shape:
   "gameVersion": "2026.09.01.0000.0000",
   "scope": "full",
   "bundleId": "sha256:...",
-  "inputs": [
+  "source": {
+    "language": "en",
+    "contentId": "sha256:...",
+    "snapshotId": "sha256:..."
+  },
+  "evidenceInputs": [
     {
       "language": "de",
-      "contentId": "sha256:...",
-      "snapshotId": "sha256:..."
+      "evidenceId": "sha256:..."
     },
     {
       "language": "en",
-      "contentId": "sha256:...",
-      "snapshotId": "sha256:..."
+      "evidenceId": "sha256:..."
+    },
+    {
+      "language": "fr",
+      "evidenceId": "sha256:..."
+    },
+    {
+      "language": "ja",
+      "evidenceId": "sha256:..."
     }
   ],
   "sheets": [
@@ -54,25 +63,47 @@ An HSG v1 file has this shape:
 }
 ```
 
-`formatVersion` is `1`. `gameVersion` and `scope` are copied from the verified inputs. Each input records its HXS language, `contentId`, and `snapshotId`; local paths are never persisted.
+`formatVersion` is `1`. `gameVersion` and `scope` are copied from the verified source and comparison inputs. Local paths are never persisted.
 
-Each sheet records the representative physical `schemaHash`, a `compatible` or `incompatible` status, a sorted `translatable` allowlist, and typed incompatibility reasons. An incompatible sheet always has an empty allowlist.
+## Source identity
 
-## Input snapshots
+`source` identifies the HXS to which the allowlist applies:
 
-Before comparison, Atlas fully verifies every HXS input. Verification includes the supported HXS format and SQLite contract, integrity and foreign-key checks, canonical payloads, String-cell coverage, schema/row/sheet hashes, counts, `contentId`, and `snapshotId`.
+- `language` is the source HXS `language`;
+- `contentId` is the source HXS `content_id`;
+- `snapshotId` is the source HXS `snapshot_id`.
 
-At least two inputs are required. Their `hxs_meta.language` values must be distinct and must use one of these canonical source-language codes:
+The source identity is authoritative when a consumer checks whether HSG can be applied to an HXS.
+
+## Evidence inputs and evidenceId
+
+`evidenceInputs` records the languages and lightweight fingerprints used to derive the allowlist. The source language appears exactly once in this array. Every language is canonical and distinct.
+
+An `evidenceId` is a SHA-256 fingerprint in the domain:
+
+```text
+HARMONIA-SOURCE-GUIDANCE-EVIDENCE-v1
+```
+
+The canonical evidence stream contains the game version, scope, and language, followed by every sheet in ordinal name order. Each sheet contributes its name, variant, and physical schema hash. Each physical row contributes `row_id` and `subrow_id`; each String occurrence contributes `column_index` and exact UTF-8 `macro_text` in column order.
+
+Evidence IDs do not include raw bytes, raw hashes, stored macro hashes, technical values or payloads, row hashes, technical or String hashes, sheet content hashes, `contentId`, `snapshotId`, producer versions, paths, or timestamps. Therefore raw-only and technical-only changes do not change an evidence ID, while changes to macro text, coordinates, schema, language, game version, or scope do.
+
+## Input requirements
+
+The current guidance command fully verifies one source HXS and at least one comparison HXS before analysis. The files must use distinct canonical `hxs_meta.language` values from this set:
 
 ```text
 en  ja  de  fr  zh-cn  zh-tw  ko
 ```
 
-The match is exact and case-sensitive. Names such as `english`, `japanese`, and `zh_CN` are not accepted. Input filenames do not provide language. Language-specific `contentId` and `snapshotId` values do not need to match. All inputs must have the same exact `game_version` and `scope`.
+Language matching is exact and case-sensitive. Values such as `english`, `japanese`, and `zh_CN` are invalid. Filenames do not provide language. All inputs must have the same exact `game_version` and `scope`.
+
+Comparison HXS files are used to derive evidence and permissions, but their HXS `contentId` and `snapshotId` values are not persisted in HSG.
 
 ## Sheet compatibility
 
-A sheet is compatible only when it exists in every input and the inputs agree on:
+A sheet is compatible only when it exists in every input and all inputs agree on:
 
 - sheet variant;
 - physical column indexes;
@@ -80,7 +111,7 @@ A sheet is compatible only when it exists in every input and the inputs agree on
 - Harmonia column types;
 - HXS schema hash.
 
-Atlas emits a sheet entry for the union of sheet names. A missing or structurally mismatched sheet is `incompatible`, has an empty `translatable` array, and is not analyzed for values. Supported incompatibility reasons are:
+Atlas emits a sheet entry for the union of sheet names. A missing or structurally mismatched sheet is `incompatible` and has an empty `translatable` array. Supported incompatibility reasons are:
 
 ```text
 missingInInput
@@ -92,7 +123,7 @@ rowTopologyMismatch
 
 ## Translatable occurrence rule
 
-For a compatible sheet, Atlas compares every physical String occurrence at the exact row/subrow/column coordinate across all selected inputs. The occurrence is added to `translatable` exactly when the selected languages do not all have equal `macro_text` values under ordinal comparison.
+For a compatible sheet, Atlas compares exact `macro_text` values at each physical row/subrow/column coordinate across all selected evidence languages. If the values are not all equal under ordinal comparison, that occurrence is added to `translatable`. Otherwise it is absent and read-only.
 
 The comparison is exact:
 
@@ -104,48 +135,40 @@ The comparison is exact:
 - no identifier heuristics;
 - raw-value differences alone do not grant permission.
 
-An empty string is a source value. Empty versus non-empty is a real variance and adds that occurrence to the allowlist. Every language does not need to differ; one exact difference is sufficient.
-
-For example, in one String column:
-
-```text
-row 1: LogChatBubbleShoutFontColor / LogChatBubbleShoutFontColor
-row 2: Hello / こんにちは
-```
-
-only row 2 is allowlisted. A localized occurrence in one row never grants permission to another row in the same column.
+An empty string is a source value. Empty versus non-empty is real variance. One differing language is sufficient.
 
 ## Applying guidance to a snapshot
 
-An HSG bundle may grant translation permission for an HXS only when all of these checks pass:
+An HSG bundle may grant permission to an HXS only when all global source checks pass:
 
 1. `HSG.gameVersion` equals `HXS.game_version`.
 2. `HSG.scope` equals `HXS.scope`.
-3. `HSG.inputs` contains an entry whose `language`, `contentId`, and `snapshotId` exactly equal the HXS metadata.
-4. For every sheet whose allowlist is consumed, the HSG `schemaHash` equals the HXS `schema_hash`.
+3. `HSG.source.language` equals `HXS.language`.
+4. `HSG.source.contentId` equals `HXS.content_id`.
+5. `HSG.source.snapshotId` equals `HXS.snapshot_id`.
 
-If any required check fails, the guidance grants no translation permission. This is fail-closed.
+For each sheet whose allowlist is consumed, `HSG.schemaHash` must equal the HXS `schema_hash`. A failed global source check grants no permission anywhere. A failed sheet schema check grants no permission for that sheet.
 
-Do not match by game version alone, language alone, a similar `contentId`, another snapshot from the same patch, or a same-named sheet with a different schema. HSG does not use text similarity or repair mismatches.
+`evidenceInputs` explains how permissions were derived. A consumer does not need the comparison HXS files to consume an HSG. Do not match by game version alone, language alone, a similar content ID, another snapshot from the same patch, or a same-named sheet with a different schema. HSG does not repair mismatches or use text similarity.
 
 ## Row topology
 
-Rows are compared in ordered scans by exact `row_id` and `subrow_id`. String cells are matched by exact `column_index`. If any input has a different row/subrow topology for a sheet, the whole sheet is incompatible and its allowlist is empty. Atlas does not guess correspondences from text or row hashes.
+Rows are compared in ordered scans by exact `row_id` and `subrow_id`. String cells are matched by exact `column_index`. If any input has different row/subrow topology for a sheet, the whole sheet is incompatible and its allowlist is empty. Atlas does not guess correspondences from text or row hashes.
 
 ## Canonical ordering
 
 Persisted arrays are canonicalized explicitly:
 
-- `inputs` by `language`, ordinal ascending;
+- `evidenceInputs` by `language`, ordinal ascending;
 - `sheets` by `name`, ordinal ascending;
-- `incompatibilityReasons` by their contract order;
+- `incompatibilityReasons` by contract order;
 - `translatable` by `rowId`, then `subrowId`, then `columnIndex`.
 
-Persisted JSON is compact UTF-8 without a BOM, uses stable camel-case enum values, and ends with one LF newline. JSON whitespace is not part of the bundle identity. The artifact contains no timestamps, absolute paths, machine names, random IDs, or filesystem-order data. The formatted JSON example in this document is for readability.
+Persisted JSON is compact UTF-8 without a BOM, uses stable camel-case enum values, and ends with exactly one LF newline. JSON whitespace is not part of `bundleId`. The formatted JSON example in this document is for readability.
 
 ## bundleId
 
-`bundleId` is a lowercase `sha256:` string computed with the dedicated domain:
+`bundleId` is a lowercase `sha256:` string computed with the domain:
 
 ```text
 HARMONIA-SOURCE-GUIDANCE-v1
@@ -154,25 +177,26 @@ HARMONIA-SOURCE-GUIDANCE-v1
 The canonical framed hash covers:
 
 - `gameVersion` and `scope`;
-- sorted input `language`, `contentId`, and `snapshotId`;
+- source `language`, `contentId`, and `snapshotId`;
+- sorted evidence-input `language` and `evidenceId`;
 - every sorted sheet name, status, schema hash, and incompatibility reason;
-- every positive occurrence’s `rowId`, `subrowId`, and `columnIndex`.
+- every sorted positive occurrence’s `rowId`, `subrowId`, and `columnIndex`.
 
-The `bundleId` field is excluded from its own hash. Output paths, timestamps, machine state, JSON whitespace, and dictionary enumeration order are not hashed.
+The `bundleId` field is excluded from its own hash. Output paths, timestamps, machine state, and JSON whitespace are not hashed.
 
 ## Validation and publication
 
-`SourceGuidanceReader` validates format version, required SHA-256 strings, input and sheet ordering, enum values, typed incompatibility reasons, coordinate ordering, incompatible-sheet emptiness, and the recomputed `bundleId`.
+`SourceGuidanceReader` validates the format version, source identity, canonical language codes, evidence-input membership and ordering, required SHA-256 strings, sheet ordering, enum values, typed incompatibility reasons, coordinate ordering, incompatible-sheet emptiness, and the recomputed `bundleId`.
 
-Generation writes the complete JSON to `<output>.partial`, flushes it, reads it back through the validator, and atomically publishes the final output. A failed generation does not publish a final artifact and removes the temporary file where practical.
+Generation writes compact JSON to `<output>.partial`, flushes it, reads it back through the validator, and atomically publishes the final output. A failed generation does not publish a final artifact and removes the temporary file where practical.
 
 ## CLI example
 
-The command is:
-
 ```bash
 dotnet run --project src/HarmoniaAtlas -- guidance \
-  --input source-en.hxs \
-  --input source-ja.hxs \
-  --output source.hsg.json
+  --source source-en.hxs \
+  --compare source-ja.hxs \
+  --compare source-de.hxs \
+  --compare source-fr.hxs \
+  --output source-en.hsg.json
 ```

@@ -17,10 +17,14 @@ public enum SourceGuidanceIncompatibilityReason
     RowTopologyMismatch,
 }
 
-public sealed record SourceGuidanceInput(
+public sealed record SourceGuidanceSourceIdentity(
     [property: JsonPropertyName("language")] string Language,
     [property: JsonPropertyName("contentId")] string ContentId,
     [property: JsonPropertyName("snapshotId")] string SnapshotId);
+
+public sealed record SourceGuidanceEvidenceInput(
+    [property: JsonPropertyName("language")] string Language,
+    [property: JsonPropertyName("evidenceId")] string EvidenceId);
 
 public sealed record SourceGuidanceOccurrence(
     [property: JsonPropertyName("rowId")] uint RowId,
@@ -39,7 +43,8 @@ public sealed record SourceGuidanceBundle(
     [property: JsonPropertyName("gameVersion")] string GameVersion,
     [property: JsonPropertyName("scope")] string Scope,
     [property: JsonPropertyName("bundleId")] string BundleId,
-    [property: JsonPropertyName("inputs")] IReadOnlyList<SourceGuidanceInput> Inputs,
+    [property: JsonPropertyName("source")] SourceGuidanceSourceIdentity Source,
+    [property: JsonPropertyName("evidenceInputs")] IReadOnlyList<SourceGuidanceEvidenceInput> EvidenceInputs,
     [property: JsonPropertyName("sheets")] IReadOnlyList<SourceGuidanceSheet> Sheets);
 
 public sealed record SourceGuidanceSummary(
