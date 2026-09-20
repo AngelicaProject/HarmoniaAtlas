@@ -54,8 +54,7 @@ public sealed class PackagePipeline
         Stopwatch total = Stopwatch.StartNew();
         string fullOutputPath = Path.GetFullPath(outputPath);
         TryDelete(fullOutputPath + ".partial");
-        string temporaryRoot = Path.Combine(Path.GetTempPath(), $"harmonia-atlas-package-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(temporaryRoot);
+        string temporaryRoot = PackageWorkingState.Prepare(fullOutputPath);
         string sourcePath = Path.Combine(temporaryRoot, "source.hxs");
         string guidancePath = Path.Combine(temporaryRoot, "source-guidance.json");
         string? partialPath = null;
@@ -72,7 +71,6 @@ public sealed class PackagePipeline
             emit?.Invoke(Phase("inspectInstallation"));
             GameInstallation installation = GameInstallation.FromPath(gamePath);
             GameLanguage requestedLanguage = GameLanguageParser.Parse(language);
-            string gameVersion = new GameVersionReader().Read(installation);
             IReadOnlyList<string> evidenceLanguages = PackageEvidencePolicy.For(requestedLanguage);
             long inspectMs = phase.ElapsedMilliseconds;
 
@@ -96,12 +94,12 @@ public sealed class PackagePipeline
 
             phase.Restart();
             emit?.Invoke(Phase("verifySource"));
-            _ = Hxs.HxsVerifier.Verify(sourcePath);
+            Hxs.HxsVerificationResult sourceVerification = Hxs.HxsVerifier.Verify(sourcePath);
             long verifyMs = phase.ElapsedMilliseconds;
 
             phase.Restart();
             emit?.Invoke(Phase("scanEvidence"));
-            using HxsGuidanceEvidenceSource sourceEvidence = HxsGuidanceEvidenceSource.OpenVerified(sourcePath);
+            using HxsGuidanceEvidenceSource sourceEvidence = HxsGuidanceEvidenceSource.OpenReadOnly(sourcePath, sourceVerification);
             List<LuminaGuidanceEvidenceSource> comparisonSources = new();
             try
             {
@@ -147,13 +145,12 @@ public sealed class PackagePipeline
 
             phase.Restart();
             emit?.Invoke(Phase("writePackage"));
-            Hxs.HxsVerificationResult sourceVerification = Hxs.HxsVerifier.Verify(sourcePath);
             HspComponentDescriptor guidanceComponent = Component("guidance", "sourceGuidance", "guidance/source-guidance.json", guidancePath);
             HspComponentDescriptor sourceComponent = Component("source", "sourceHxs", "source/source.hxs", sourcePath);
             HspManifest manifestWithoutId = new(
                 1,
                 string.Empty,
-                gameVersion,
+                sourceVerification.Metadata.GameVersion,
                 sourceVerification.Metadata.Scope,
                 new HspSourceIdentity(
                     sourceVerification.Metadata.Language,
@@ -215,7 +212,7 @@ public sealed class PackagePipeline
         }
         finally
         {
-            TryDeleteDirectory(temporaryRoot);
+            PackageWorkingState.Cleanup(temporaryRoot);
         }
     }
 
@@ -246,20 +243,6 @@ public sealed class PackagePipeline
         }
     }
 
-    private static void TryDeleteDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
-        }
-        catch
-        {
-            // Best-effort cleanup; a hard process kill may leave owned temporary state.
-        }
-    }
 }
 
 public sealed class PackageException : Exception

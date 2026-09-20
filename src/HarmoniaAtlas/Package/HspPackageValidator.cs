@@ -55,7 +55,8 @@ public static class HspPackageValidator
             string guidancePath = materialized["sourceGuidance"];
             HxsVerificationResult sourceVerification = HxsVerifier.Verify(sourcePath);
             SourceGuidanceBundle guidance = SourceGuidanceReader.Read(guidancePath);
-            ValidateRelationships(manifest, sourceVerification.Metadata, guidance, sourcePath);
+            using HxsGuidanceEvidenceSource sourceEvidence = HxsGuidanceEvidenceSource.OpenReadOnly(sourcePath, sourceVerification);
+            ValidateRelationships(manifest, sourceVerification.Metadata, guidance, sourceEvidence);
             return new HspPackageSummary(manifest, sourceVerification.Metadata, guidance, fullPath);
         }
         catch (HspFormatException)
@@ -198,7 +199,7 @@ public static class HspPackageValidator
         HspManifest manifest,
         HxsMetadata source,
         SourceGuidanceBundle guidance,
-        string sourcePath)
+        HxsGuidanceEvidenceSource sourceEvidence)
     {
         if (!string.Equals(manifest.GameVersion, source.GameVersion, StringComparison.Ordinal) ||
             !string.Equals(manifest.Scope, source.Scope, StringComparison.Ordinal) ||
@@ -218,12 +219,20 @@ public static class HspPackageValidator
             throw new HspFormatException("Embedded source guidance does not apply to the embedded source HXS.");
         }
 
-        using HxsGuidanceEvidenceSource evidence = HxsGuidanceEvidenceSource.OpenVerified(sourcePath);
+        foreach (SourceGuidanceSheet guidanceSheet in guidance.Sheets.Where(sheet => sheet.Status == SourceGuidanceSheetStatus.Compatible))
+        {
+            if (!sourceEvidence.Sheets.TryGetValue(guidanceSheet.Name, out GuidanceSheetMetadata? sourceSheet) ||
+                !string.Equals(guidanceSheet.SchemaHash, SourceGuidanceHashing.ToHashString(sourceSheet.SchemaHash), StringComparison.Ordinal))
+            {
+                throw new HspFormatException($"Compatible HSG sheet '{guidanceSheet.Name}' does not apply to the embedded source HXS.");
+            }
+        }
+
         using SourceGuidanceEvidenceHasher hasher = new(source.GameVersion, source.Scope, source.Language);
-        foreach (GuidanceSheetMetadata sheet in evidence.Sheets.Values.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
+        foreach (GuidanceSheetMetadata sheet in sourceEvidence.Sheets.Values.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
         {
             hasher.AddSheet(sheet.Name, sheet.Variant, sheet.SchemaHash);
-            foreach (GuidanceStringRow row in evidence.ReadStringRows(sheet.Name))
+            foreach (GuidanceStringRow row in sourceEvidence.ReadStringRows(sheet.Name))
             {
                 hasher.AddRow(row.RowId, row.SubrowId);
                 foreach (GuidanceStringValue value in row.Values.OrderBy(value => value.ColumnIndex))
@@ -234,8 +243,8 @@ public static class HspPackageValidator
         }
 
         string sourceEvidenceId = hasher.ComputeEvidenceId();
-        SourceGuidanceEvidenceInput? sourceEvidence = guidance.EvidenceInputs.SingleOrDefault(input => input.Language == source.Language);
-        if (sourceEvidence is null || !string.Equals(sourceEvidence.EvidenceId, sourceEvidenceId, StringComparison.Ordinal))
+        SourceGuidanceEvidenceInput? sourceEvidenceInput = guidance.EvidenceInputs.SingleOrDefault(input => input.Language == source.Language);
+        if (sourceEvidenceInput is null || !string.Equals(sourceEvidenceInput.EvidenceId, sourceEvidenceId, StringComparison.Ordinal))
         {
             throw new HspFormatException("Embedded source guidance evidence does not match the embedded source HXS.");
         }

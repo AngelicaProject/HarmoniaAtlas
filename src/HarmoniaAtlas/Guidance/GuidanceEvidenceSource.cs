@@ -28,6 +28,13 @@ public sealed record GuidanceScanProgress(
     int SheetCount,
     long RowsProcessed);
 
+public static class GuidanceLanguageSafety
+{
+    public static bool IsSafe(string requestedLanguage, string effectiveLanguage) =>
+        string.Equals(effectiveLanguage, "none", StringComparison.Ordinal) ||
+        string.Equals(effectiveLanguage, requestedLanguage, StringComparison.Ordinal);
+}
+
 public interface IGuidanceEvidenceSource : IDisposable
 {
     string Language { get; }
@@ -63,26 +70,7 @@ public sealed class HxsGuidanceEvidenceSource : IGuidanceEvidenceSource
         try
         {
             HxsVerificationResult verification = HxsVerifier.Verify(path);
-            HxsReader reader = HxsReader.OpenReadOnly(path);
-            try
-            {
-                IReadOnlyDictionary<string, GuidanceSheetMetadata> sheets = reader.ReadSheets()
-                    .ToDictionary(
-                        sheet => sheet.Name,
-                        sheet => new GuidanceSheetMetadata(
-                            sheet.Name,
-                            sheet.Variant,
-                            sheet.EffectiveLanguage,
-                            sheet.Columns,
-                            sheet.SchemaHash),
-                        StringComparer.Ordinal);
-                return new HxsGuidanceEvidenceSource(reader, verification.Metadata, sheets);
-            }
-            catch
-            {
-                reader.Dispose();
-                throw;
-            }
+            return OpenReadOnly(path, verification);
         }
         catch (SourceGuidanceException)
         {
@@ -94,8 +82,43 @@ public sealed class HxsGuidanceEvidenceSource : IGuidanceEvidenceSource
         }
     }
 
+    public static HxsGuidanceEvidenceSource OpenReadOnly(string path, HxsVerificationResult verification) =>
+        OpenReadOnly(path, verification.Metadata);
+
+    public static HxsGuidanceEvidenceSource OpenReadOnly(string path, HxsMetadata metadata)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(metadata);
+        HxsReader reader = HxsReader.OpenReadOnly(path);
+        try
+        {
+            IReadOnlyDictionary<string, GuidanceSheetMetadata> sheets = reader.ReadSheets()
+                .ToDictionary(
+                    sheet => sheet.Name,
+                    sheet => new GuidanceSheetMetadata(
+                        sheet.Name,
+                        sheet.Variant,
+                        sheet.EffectiveLanguage,
+                        sheet.Columns,
+                        sheet.SchemaHash,
+                        GuidanceLanguageSafety.IsSafe(metadata.Language, sheet.EffectiveLanguage)),
+                    StringComparer.Ordinal);
+            return new HxsGuidanceEvidenceSource(reader, metadata, sheets);
+        }
+        catch
+        {
+            reader.Dispose();
+            throw;
+        }
+    }
+
     public IEnumerable<GuidanceStringRow> ReadStringRows(string sheetName)
     {
+        if (!Sheets[sheetName].LanguageSafe)
+        {
+            yield break;
+        }
+
         foreach (HxsStringRowRecord row in _reader.ReadStringRows(sheetName))
         {
             yield return new GuidanceStringRow(
@@ -150,8 +173,7 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
                 LuminaSheet sheet = source.OpenSheet(sheetName);
                 HarmoniaSheetInfo info = sheet.Info;
                 byte[] schemaHash = HxsHashing.HashSchema(info.Name, info.Variant, info.Columns);
-                bool languageSafe = string.Equals(info.EffectiveLanguage, "none", StringComparison.Ordinal) ||
-                                    string.Equals(info.EffectiveLanguage, languageCode, StringComparison.Ordinal);
+                bool languageSafe = GuidanceLanguageSafety.IsSafe(languageCode, info.EffectiveLanguage);
                 luminaSheets.Add(sheetName, sheet);
                 sheets.Add(sheetName, new GuidanceSheetMetadata(
                     info.Name,

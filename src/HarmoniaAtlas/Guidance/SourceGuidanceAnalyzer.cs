@@ -59,31 +59,78 @@ public sealed class SourceGuidanceAnalyzer
         ValidateInputs(inputs);
         List<OpenInput> openInputs = inputs
             .OrderBy(input => input.Language, StringComparer.Ordinal)
-            .Select(input => new OpenInput(input, input.Sheets, ComputeEvidenceId(input, progress)))
+            .Select(input => new OpenInput(input))
             .ToList();
-        OpenInput sourceOpenInput = openInputs.Single(input => ReferenceEquals(input.Source, source));
-
-        SourceGuidanceSheet[] guidanceSheets = openInputs
+        string[] sheetNames = openInputs
             .SelectMany(input => input.Sheets.Keys)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(name => name, StringComparer.Ordinal)
-            .Select(sheetName => AnalyzeSheet(sheetName, sourceOpenInput, openInputs))
             .ToArray();
+        Dictionary<string, SourceGuidanceSheet> guidanceSheets = new(StringComparer.Ordinal);
 
-        if (source.ContentId is null || source.SnapshotId is null)
+        try
         {
-            throw new SourceGuidanceException("The guidance source must expose a verified HXS contentId and snapshotId.");
-        }
+            for (int sheetIndex = 0; sheetIndex < sheetNames.Length; sheetIndex++)
+            {
+                string sheetName = sheetNames[sheetIndex];
+                List<OpenInput> presentInputs = openInputs.Where(input => input.Sheets.ContainsKey(sheetName)).ToList();
+                SheetAnalysis analysis = AnalyzeMetadata(sheetName, openInputs, presentInputs);
+                foreach (OpenInput input in presentInputs)
+                {
+                    input.Hasher.AddSheet(sheetName, input.Sheets[sheetName].Variant, input.Sheets[sheetName].SchemaHash);
+                }
 
-        SourceGuidanceBundle withoutBundleId = new(
-            1,
-            source.GameVersion,
-            source.Scope,
-            string.Empty,
-            new SourceGuidanceSourceIdentity(source.Language, source.ContentId, source.SnapshotId),
-            openInputs.Select(input => new SourceGuidanceEvidenceInput(input.Source.Language, input.EvidenceId)).ToArray(),
-            guidanceSheets);
-        return withoutBundleId with { BundleId = SourceGuidanceHashing.ComputeBundleId(withoutBundleId) };
+                if (analysis.Reasons.Count != 0)
+                {
+                    foreach (OpenInput input in presentInputs.Where(input => input.Sheets[sheetName].LanguageSafe))
+                    {
+                        ScanSingle(input, sheetName, sheetIndex, sheetNames.Length, progress);
+                    }
+
+                    guidanceSheets.Add(sheetName, IncompatibleSheet(analysis.Sheet, analysis.Reasons));
+                    continue;
+                }
+
+                bool rowsCompatible = ScanComparable(
+                    sheetName,
+                    analysis.Sheet.Columns,
+                    presentInputs,
+                    sheetIndex,
+                    sheetNames.Length,
+                    progress,
+                    out List<SourceGuidanceOccurrence> translatable);
+                guidanceSheets.Add(sheetName, rowsCompatible
+                    ? new SourceGuidanceSheet(
+                        sheetName,
+                        SourceGuidanceHashing.ToHashString(analysis.Sheet.SchemaHash),
+                        SourceGuidanceSheetStatus.Compatible,
+                        translatable,
+                        Array.Empty<SourceGuidanceIncompatibilityReason>())
+                    : IncompatibleSheet(analysis.Sheet, [SourceGuidanceIncompatibilityReason.RowTopologyMismatch]));
+            }
+
+            if (source.ContentId is null || source.SnapshotId is null)
+            {
+                throw new SourceGuidanceException("The guidance source must expose a verified HXS contentId and snapshotId.");
+            }
+
+            SourceGuidanceBundle withoutBundleId = new(
+                1,
+                source.GameVersion,
+                source.Scope,
+                string.Empty,
+                new SourceGuidanceSourceIdentity(source.Language, source.ContentId, source.SnapshotId),
+                openInputs.Select(input => new SourceGuidanceEvidenceInput(input.Source.Language, input.Hasher.ComputeEvidenceId())).ToArray(),
+                sheetNames.Select(sheetName => guidanceSheets[sheetName]).ToArray());
+            return withoutBundleId with { BundleId = SourceGuidanceHashing.ComputeBundleId(withoutBundleId) };
+        }
+        finally
+        {
+            foreach (OpenInput input in openInputs)
+            {
+                input.Hasher.Dispose();
+            }
+        }
     }
 
     private static void ValidateInputs(IReadOnlyList<IGuidanceEvidenceSource> inputs)
@@ -114,62 +161,36 @@ public sealed class SourceGuidanceAnalyzer
         }
     }
 
-    private static string ComputeEvidenceId(IGuidanceEvidenceSource input, Action<GuidanceScanProgress>? progress)
-    {
-        using SourceGuidanceEvidenceHasher hasher = new(input.GameVersion, input.Scope, input.Language);
-        string[] sheetNames = input.Sheets.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
-        for (int sheetIndex = 0; sheetIndex < sheetNames.Length; sheetIndex++)
-        {
-            string sheetName = sheetNames[sheetIndex];
-            GuidanceSheetMetadata sheet = input.Sheets[sheetName];
-            hasher.AddSheet(sheet.Name, sheet.Variant, sheet.SchemaHash);
-            long rowsProcessed = 0;
-            long lastProgressTimestamp = Environment.TickCount64;
-            foreach (GuidanceStringRow row in input.ReadStringRows(sheetName))
-            {
-                hasher.AddRow(row.RowId, row.SubrowId);
-                foreach (GuidanceStringValue value in row.Values.OrderBy(value => value.ColumnIndex))
-                {
-                    hasher.AddStringOccurrence(value.ColumnIndex, value.MacroText);
-                }
-
-                rowsProcessed++;
-                if (progress is not null &&
-                    (rowsProcessed % 1000 == 0 || Environment.TickCount64 - lastProgressTimestamp >= 250))
-                {
-                    progress(new GuidanceScanProgress(input.Language, sheetName, sheetIndex + 1, sheetNames.Length, rowsProcessed));
-                    lastProgressTimestamp = Environment.TickCount64;
-                }
-            }
-
-            progress?.Invoke(new GuidanceScanProgress(input.Language, sheetName, sheetIndex + 1, sheetNames.Length, rowsProcessed));
-        }
-
-        return hasher.ComputeEvidenceId();
-    }
-
-    private static SourceGuidanceSheet AnalyzeSheet(
+    private static SheetAnalysis AnalyzeMetadata(
         string sheetName,
-        OpenInput sourceInput,
-        IReadOnlyList<OpenInput> inputs)
+        IReadOnlyList<OpenInput> allInputs,
+        IReadOnlyList<OpenInput> presentInputs)
     {
-        List<OpenInput> presentInputs = inputs.Where(input => input.Sheets.ContainsKey(sheetName)).ToList();
-        OpenInput representativeInput = sourceInput.Sheets.ContainsKey(sheetName) ? sourceInput : presentInputs[0];
+        OpenInput representativeInput = allInputs[0].Sheets.ContainsKey(sheetName)
+            ? allInputs[0]
+            : presentInputs[0];
         GuidanceSheetMetadata representative = representativeInput.Sheets[sheetName];
         List<SourceGuidanceIncompatibilityReason> reasons = new();
-        if (presentInputs.Count != inputs.Count)
+        if (presentInputs.Count != allInputs.Count)
         {
             reasons.Add(SourceGuidanceIncompatibilityReason.MissingInInput);
         }
 
         foreach (OpenInput input in presentInputs)
         {
+            GuidanceSheetMetadata sheet = input.Sheets[sheetName];
+            if (!sheet.LanguageSafe)
+            {
+                // HSG v1 has no dedicated fallback reason. RowTopologyMismatch is the existing
+                // fail-closed incompatibility state and keeps the persisted contract unchanged.
+                reasons.Add(SourceGuidanceIncompatibilityReason.RowTopologyMismatch);
+            }
+
             if (ReferenceEquals(input, representativeInput))
             {
                 continue;
             }
 
-            GuidanceSheetMetadata sheet = input.Sheets[sheetName];
             if (sheet.Variant != representative.Variant)
             {
                 reasons.Add(SourceGuidanceIncompatibilityReason.SheetVariantMismatch);
@@ -186,37 +207,37 @@ public sealed class SourceGuidanceAnalyzer
             }
         }
 
-        reasons = reasons.Distinct().OrderBy(reason => (int)reason).ToList();
-        string schemaHash = SourceGuidanceHashing.ToHashString(representative.SchemaHash);
-        if (reasons.Count != 0)
-        {
-            return IncompatibleSheet(sheetName, schemaHash, reasons);
-        }
-
-        if (!TryAnalyzeRows(sheetName, representative.Columns, inputs, out List<SourceGuidanceOccurrence> translatable))
-        {
-            reasons.Add(SourceGuidanceIncompatibilityReason.RowTopologyMismatch);
-            return IncompatibleSheet(sheetName, schemaHash, reasons);
-        }
-
-        return new SourceGuidanceSheet(
-            sheetName,
-            schemaHash,
-            SourceGuidanceSheetStatus.Compatible,
-            translatable,
-            Array.Empty<SourceGuidanceIncompatibilityReason>());
+        return new SheetAnalysis(
+            representative,
+            reasons.Distinct().OrderBy(reason => (int)reason).ToArray());
     }
 
-    private static SourceGuidanceSheet IncompatibleSheet(
+    private static void ScanSingle(
+        OpenInput input,
         string sheetName,
-        string schemaHash,
-        IReadOnlyList<SourceGuidanceIncompatibilityReason> reasons) =>
-        new(sheetName, schemaHash, SourceGuidanceSheetStatus.Incompatible, Array.Empty<SourceGuidanceOccurrence>(), reasons);
+        int sheetIndex,
+        int sheetCount,
+        Action<GuidanceScanProgress>? progress)
+    {
+        long rowsProcessed = 0;
+        long lastProgressTimestamp = Environment.TickCount64;
+        foreach (GuidanceStringRow row in input.Source.ReadStringRows(sheetName))
+        {
+            AddEvidenceRow(input.Hasher, row);
+            rowsProcessed++;
+            EmitProgress(input, sheetName, sheetIndex, sheetCount, rowsProcessed, ref lastProgressTimestamp, progress);
+        }
 
-    private static bool TryAnalyzeRows(
+        progress?.Invoke(new GuidanceScanProgress(input.Source.Language, sheetName, sheetIndex + 1, sheetCount, rowsProcessed));
+    }
+
+    private static bool ScanComparable(
         string sheetName,
         IReadOnlyList<HarmoniaColumnDefinition> columns,
         IReadOnlyList<OpenInput> inputs,
+        int sheetIndex,
+        int sheetCount,
+        Action<GuidanceScanProgress>? progress,
         out List<SourceGuidanceOccurrence> translatable)
     {
         translatable = new();
@@ -228,11 +249,14 @@ public sealed class SourceGuidanceAnalyzer
         List<IEnumerator<GuidanceStringRow>> enumerators = inputs
             .Select(input => input.Source.ReadStringRows(sheetName).GetEnumerator())
             .ToList();
+        long[] rowsProcessed = new long[inputs.Count];
+        long[] lastProgressTimestamps = Enumerable.Repeat(Environment.TickCount64, inputs.Count).ToArray();
+        bool topologyIsCompatible = true;
         try
         {
             while (true)
             {
-                GuidanceStringRow?[] currentRows = new GuidanceStringRow?[enumerators.Count];
+                GuidanceStringRow?[] currentRows = new GuidanceStringRow?[inputs.Count];
                 bool anyMoved = false;
                 bool allMoved = true;
                 for (int index = 0; index < enumerators.Count; index++)
@@ -243,18 +267,34 @@ public sealed class SourceGuidanceAnalyzer
                     if (moved)
                     {
                         currentRows[index] = enumerators[index].Current;
+                        rowsProcessed[index]++;
                     }
                 }
 
                 if (!anyMoved)
                 {
-                    return true;
+                    break;
                 }
 
-                if (!allMoved || currentRows.Any(row => row is null) ||
-                    currentRows.Any(row => row!.RowId != currentRows[0]!.RowId || row.SubrowId != currentRows[0]!.SubrowId))
+                bool coordinatesMatch = allMoved && currentRows.All(row => row is not null) &&
+                    currentRows.All(row => row!.RowId == currentRows[0]!.RowId && row.SubrowId == currentRows[0]!.SubrowId);
+                if (!coordinatesMatch)
                 {
-                    return false;
+                    topologyIsCompatible = false;
+                }
+
+                for (int index = 0; index < inputs.Count; index++)
+                {
+                    if (currentRows[index] is not null)
+                    {
+                        AddEvidenceRow(inputs[index].Hasher, currentRows[index]!);
+                        EmitProgress(inputs[index], sheetName, sheetIndex, sheetCount, rowsProcessed[index], ref lastProgressTimestamps[index], progress);
+                    }
+                }
+
+                if (!coordinatesMatch)
+                {
+                    continue;
                 }
 
                 int[] cellIndexes = new int[currentRows.Length];
@@ -275,7 +315,7 @@ public sealed class SourceGuidanceAnalyzer
                         cellIndexes[inputIndex] = cellIndex + 1;
                     }
 
-                    if (macroTexts.Skip(1).Any(value => !string.Equals(macroTexts[0], value, StringComparison.Ordinal)))
+                    if (topologyIsCompatible && macroTexts.Skip(1).Any(value => !string.Equals(macroTexts[0], value, StringComparison.Ordinal)))
                     {
                         translatable.Add(new SourceGuidanceOccurrence(currentRows[0]!.RowId, currentRows[0]!.SubrowId, columnIndex));
                     }
@@ -294,7 +334,56 @@ public sealed class SourceGuidanceAnalyzer
                 enumerator.Dispose();
             }
         }
+
+        for (int inputIndex = 0; inputIndex < inputs.Count; inputIndex++)
+        {
+            OpenInput input = inputs[inputIndex];
+            progress?.Invoke(new GuidanceScanProgress(input.Source.Language, sheetName, sheetIndex + 1, sheetCount, rowsProcessed[inputIndex]));
+        }
+
+        if (!topologyIsCompatible)
+        {
+            translatable.Clear();
+        }
+
+        return topologyIsCompatible;
     }
+
+    private static void AddEvidenceRow(SourceGuidanceEvidenceHasher hasher, GuidanceStringRow row)
+    {
+        hasher.AddRow(row.RowId, row.SubrowId);
+        foreach (GuidanceStringValue value in row.Values.OrderBy(value => value.ColumnIndex))
+        {
+            hasher.AddStringOccurrence(value.ColumnIndex, value.MacroText);
+        }
+    }
+
+    private static void EmitProgress(
+        OpenInput input,
+        string sheetName,
+        int sheetIndex,
+        int sheetCount,
+        long rowsProcessed,
+        ref long lastProgressTimestamp,
+        Action<GuidanceScanProgress>? progress)
+    {
+        if (progress is not null &&
+            (rowsProcessed % 1000 == 0 || Environment.TickCount64 - lastProgressTimestamp >= 250))
+        {
+            progress(new GuidanceScanProgress(input.Source.Language, sheetName, sheetIndex + 1, sheetCount, rowsProcessed));
+            lastProgressTimestamp = Environment.TickCount64;
+        }
+    }
+
+    private static SourceGuidanceSheet IncompatibleSheet(
+        GuidanceSheetMetadata sheet,
+        IReadOnlyList<SourceGuidanceIncompatibilityReason> reasons) =>
+        new(
+            sheet.Name,
+            SourceGuidanceHashing.ToHashString(sheet.SchemaHash),
+            SourceGuidanceSheetStatus.Incompatible,
+            Array.Empty<SourceGuidanceOccurrence>(),
+            reasons);
 
     private static bool ColumnsEqual(IReadOnlyList<HarmoniaColumnDefinition> first, IReadOnlyList<HarmoniaColumnDefinition> second) =>
         first.Count == second.Count && first.Zip(second).All(pair =>
@@ -302,8 +391,21 @@ public sealed class SourceGuidanceAnalyzer
             pair.First.Offset == pair.Second.Offset &&
             pair.First.Type == pair.Second.Type);
 
-    private sealed record OpenInput(
-        IGuidanceEvidenceSource Source,
-        IReadOnlyDictionary<string, GuidanceSheetMetadata> Sheets,
-        string EvidenceId);
+    private sealed class OpenInput
+    {
+        public OpenInput(IGuidanceEvidenceSource source)
+        {
+            Source = source;
+            Sheets = source.Sheets;
+            Hasher = new SourceGuidanceEvidenceHasher(source.GameVersion, source.Scope, source.Language);
+        }
+
+        public IGuidanceEvidenceSource Source { get; }
+        public IReadOnlyDictionary<string, GuidanceSheetMetadata> Sheets { get; }
+        public SourceGuidanceEvidenceHasher Hasher { get; }
+    }
+
+    private sealed record SheetAnalysis(
+        GuidanceSheetMetadata Sheet,
+        IReadOnlyList<SourceGuidanceIncompatibilityReason> Reasons);
 }

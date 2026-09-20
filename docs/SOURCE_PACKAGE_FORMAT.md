@@ -70,7 +70,7 @@ The `packageId` field itself is excluded from this hash. ZIP timestamps, compres
 
 ## Validation
 
-A reader validates the ZIP, duplicate entry names, the single manifest, manifest version, component uniqueness and path safety, required components, archive membership, sizes, hashes, package ID, embedded HXS, embedded HSG, and their relationships. It materializes only the two manifest-approved current components into a controlled temporary directory while validating them; arbitrary ZIP entries are never extracted.
+A reader validates the ZIP, duplicate entry names, the single manifest, manifest version, component uniqueness and path safety, required components, archive membership, sizes, hashes, package ID, embedded HXS, embedded HSG, and their relationships. Every compatible HSG sheet must exist in the embedded HXS with the same schema hash. It materializes only the two manifest-approved current components into a controlled temporary directory while validating them; arbitrary ZIP entries are never extracted.
 
 Unknown optional component kinds are integrity-checked and may be ignored. Unknown required component kinds are rejected. This permits optional components to be added without changing the HXS or HSG contracts.
 

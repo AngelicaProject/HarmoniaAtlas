@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using HarmoniaAtlas.Guidance;
 using HarmoniaAtlas.Hxs;
 using HarmoniaAtlas.Model;
@@ -149,6 +150,43 @@ public sealed class HspPackageTests
     }
 
     [Fact]
+    public void ValidatorRejectsRehashedCompatibleGuidanceSchemaMismatch()
+    {
+        string root = NewDirectory();
+        try
+        {
+            string source = CreateSnapshot(root, "en", "Fire Shard");
+            string japanese = CreateSnapshot(root, "ja", "ファイアシャード");
+            string german = CreateSnapshot(root, "de", "Feuerscherbe");
+            string french = CreateSnapshot(root, "fr", "Éclat de feu");
+            string guidance = Path.Combine(root, "guidance.json");
+            new SourceGuidanceGenerator().Generate(source, [japanese, german, french], guidance);
+            SourceGuidanceBundle original = SourceGuidanceReader.Read(guidance);
+            SourceGuidanceSheet compatible = Assert.Single(original.Sheets, sheet => sheet.Status == SourceGuidanceSheetStatus.Compatible);
+            SourceGuidanceBundle withoutId = original with
+            {
+                BundleId = string.Empty,
+                Sheets = [compatible with { SchemaHash = "sha256:" + new string('f', 64) }],
+            };
+            SourceGuidanceBundle tampered = withoutId with
+            {
+                BundleId = SourceGuidanceHashing.ComputeBundleId(withoutId),
+            };
+            string tamperedGuidance = Path.Combine(root, "tampered-guidance.json");
+            WriteGuidanceBundle(tampered, tamperedGuidance);
+            string path = Path.Combine(root, "tampered-schema.hsp");
+            HspManifest manifest = BuildManifest(source, tamperedGuidance);
+            WriteArchive(path, manifest, source, tamperedGuidance, tamperSource: false, extraEntry: false);
+
+            Assert.Throws<HspFormatException>(() => HspPackageValidator.Validate(path));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void PartialPublicationIsCleanedOnFailureAndStalePartialIsReplaced()
     {
         string root = NewDirectory();
@@ -226,6 +264,19 @@ public sealed class HspPackageTests
         {
             WriteBytes(archive, "debug.txt", Encoding.UTF8.GetBytes("unexpected"));
         }
+    }
+
+    private static void WriteGuidanceBundle(SourceGuidanceBundle bundle, string path)
+    {
+        JsonSerializerOptions options = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        };
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
+        File.WriteAllText(
+            path,
+            JsonSerializer.Serialize(bundle, options) + "\n",
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static void WriteFile(ZipArchive archive, string entryName, string path)
