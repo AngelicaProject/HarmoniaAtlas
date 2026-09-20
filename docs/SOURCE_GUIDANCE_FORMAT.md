@@ -121,6 +121,8 @@ schemaHashMismatch
 rowTopologyMismatch
 ```
 
+A sheet whose effective specific language differs from the requested evidence language is incompatible and has an empty `translatable` array. Its physical String rows still participate in that input's `evidenceId`.
+
 ## Translatable occurrence rule
 
 For a compatible sheet, Atlas compares exact `macro_text` values at each physical row/subrow/column coordinate across all selected evidence languages. If the values are not all equal under ordinal comparison, that occurrence is added to `translatable`. Otherwise it is absent and read-only.

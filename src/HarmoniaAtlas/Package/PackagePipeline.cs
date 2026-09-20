@@ -57,6 +57,7 @@ public sealed class PackagePipeline
         string temporaryRoot = PackageWorkingState.Prepare(fullOutputPath);
         string sourcePath = Path.Combine(temporaryRoot, "source.hxs");
         string guidancePath = Path.Combine(temporaryRoot, "source-guidance.json");
+        string validationRoot = Path.Combine(temporaryRoot, "validation");
         string? partialPath = null;
 
         try
@@ -163,7 +164,7 @@ public sealed class PackagePipeline
 
             phase.Restart();
             emit?.Invoke(Phase("validatePackage"));
-            HspPackageSummary validated = HspPackageValidator.Validate(partialPath);
+            HspPackageSummary validated = HspPackageValidator.Validate(partialPath, validationRoot);
             long validateMs = phase.ElapsedMilliseconds;
             HspWriter.Publish(partialPath, fullOutputPath);
             partialPath = null;

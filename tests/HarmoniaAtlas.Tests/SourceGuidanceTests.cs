@@ -514,6 +514,33 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
+    public void UnsafePhysicalRowsChangeEvidenceIdWhileSheetsRemainIncompatible()
+    {
+        string unsafeA = CreateSnapshot("ja", [SheetWithLanguage("Item", "en", ["fallback A"])]);
+        string unsafeB = CreateSnapshot("ja", [SheetWithLanguage("Item", "en", ["fallback B"])]);
+        string comparison = CreateSnapshot("en", [SheetWithLanguage("Item", "en", ["English"])]) ;
+        try
+        {
+            SourceGuidanceBundle first = Analyze(unsafeA, [comparison]);
+            SourceGuidanceBundle second = Analyze(unsafeB, [comparison]);
+
+            Assert.Equal(SourceGuidanceSheetStatus.Incompatible, Assert.Single(first.Sheets).Status);
+            Assert.Equal(SourceGuidanceSheetStatus.Incompatible, Assert.Single(second.Sheets).Status);
+            Assert.Empty(first.Sheets.Single().Translatable);
+            Assert.Empty(second.Sheets.Single().Translatable);
+            Assert.NotEqual(
+                first.EvidenceInputs.Single(input => input.Language == "ja").EvidenceId,
+                second.EvidenceInputs.Single(input => input.Language == "ja").EvidenceId);
+        }
+        finally
+        {
+            Delete(unsafeA);
+            Delete(unsafeB);
+            Delete(comparison);
+        }
+    }
+
+    [Fact]
     public void GenerationFailureDoesNotPublishFinalOrPartialGuidance()
     {
         string invalid = NewPath();

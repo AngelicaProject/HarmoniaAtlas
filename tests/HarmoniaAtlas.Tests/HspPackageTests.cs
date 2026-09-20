@@ -187,6 +187,43 @@ public sealed class HspPackageTests
     }
 
     [Fact]
+    public void ValidatorUsesCallerOwnedMaterializationRootAndPreservesItOnFailure()
+    {
+        string root = NewDirectory();
+        try
+        {
+            string source = CreateSnapshot(root, "en", "Fire Shard");
+            string japanese = CreateSnapshot(root, "ja", "ファイアシャード");
+            string german = CreateSnapshot(root, "de", "Feuerscherbe");
+            string french = CreateSnapshot(root, "fr", "Éclat de feu");
+            string guidance = Path.Combine(root, "guidance.json");
+            new SourceGuidanceGenerator().Generate(source, [japanese, german, french], guidance);
+            HspManifest manifest = BuildManifest(source, guidance);
+            string partial = new HspWriter().WritePartial(Path.Combine(root, "package.hsp"), source, guidance, manifest);
+            string validationRoot = Path.Combine(root, "validation");
+
+            byte[] sourceBefore = File.ReadAllBytes(source);
+            HspPackageValidator.Validate(partial, validationRoot);
+
+            Assert.True(File.Exists(Path.Combine(validationRoot, "source", "source.hxs")));
+            Assert.True(File.Exists(Path.Combine(validationRoot, "guidance", "source-guidance.json")));
+            Assert.Equal(sourceBefore, File.ReadAllBytes(source));
+
+            File.WriteAllText(Path.Combine(validationRoot, "caller-owned.txt"), "keep");
+            string invalid = Path.Combine(root, "invalid.hsp");
+            WriteArchive(invalid, manifest, source, guidance, tamperSource: true, extraEntry: false);
+            string invalidValidationRoot = Path.Combine(root, "validation-failure");
+            Assert.Throws<HspFormatException>(() => HspPackageValidator.Validate(invalid, invalidValidationRoot));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(validationRoot, "caller-owned.txt")));
+            Assert.True(Directory.Exists(invalidValidationRoot));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void PartialPublicationIsCleanedOnFailureAndStalePartialIsReplaced()
     {
         string root = NewDirectory();

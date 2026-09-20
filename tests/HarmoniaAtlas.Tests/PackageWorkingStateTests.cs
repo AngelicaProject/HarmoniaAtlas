@@ -26,6 +26,10 @@ public sealed class PackageWorkingStateTests
         {
             Directory.CreateDirectory(root);
             File.WriteAllText(Path.Combine(root, "stale.txt"), "stale");
+            Directory.CreateDirectory(Path.Combine(root, "validation", "source"));
+            Directory.CreateDirectory(Path.Combine(root, "validation", "guidance"));
+            File.WriteAllText(Path.Combine(root, "validation", "source", "source.hxs"), "stale validation source");
+            File.WriteAllText(Path.Combine(root, "validation", "guidance", "source-guidance.json"), "stale validation guidance");
             string prepared = PackageWorkingState.Prepare(output);
 
             Assert.Equal(root, prepared);

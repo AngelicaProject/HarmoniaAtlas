@@ -114,11 +114,6 @@ public sealed class HxsGuidanceEvidenceSource : IGuidanceEvidenceSource
 
     public IEnumerable<GuidanceStringRow> ReadStringRows(string sheetName)
     {
-        if (!Sheets[sheetName].LanguageSafe)
-        {
-            yield break;
-        }
-
         foreach (HxsStringRowRecord row in _reader.ReadStringRows(sheetName))
         {
             yield return new GuidanceStringRow(
@@ -195,12 +190,6 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
 
     public IEnumerable<GuidanceStringRow> ReadStringRows(string sheetName)
     {
-        GuidanceSheetMetadata metadata = Sheets[sheetName];
-        if (!metadata.LanguageSafe)
-        {
-            yield break;
-        }
-
         foreach (LuminaStringRow row in _luminaSheets[sheetName].EnumerateStringRows())
         {
             yield return new GuidanceStringRow(

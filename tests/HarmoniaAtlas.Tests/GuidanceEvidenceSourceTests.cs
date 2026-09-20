@@ -28,6 +28,28 @@ public sealed class GuidanceEvidenceSourceTests
         Assert.Equal(1, progress.Count(item => item.Language == "ja" && item.RowsProcessed == 1));
     }
 
+    [Fact]
+    public void UnsafeSheetsAreEnumeratedOnceAndRemainInEvidenceButCannotGrantPermission()
+    {
+        GuidanceSheetMetadata unsafeMetadata = new(
+            "Item",
+            HarmoniaSheetVariant.DefaultRows,
+            "en",
+            [new HarmoniaColumnDefinition(0, 0, HarmoniaColumnType.String)],
+            new byte[32],
+            LanguageSafe: false);
+        GuidanceSheetMetadata safeMetadata = unsafeMetadata with { EffectiveLanguage = "none", LanguageSafe = true };
+        CountingEvidenceSource source = new("ja", unsafeMetadata, "fallback");
+        CountingEvidenceSource comparison = new("en", safeMetadata, "English");
+
+        SourceGuidanceBundle bundle = new SourceGuidanceAnalyzer().Analyze(source, [comparison]);
+
+        Assert.Equal(1, source.EnumerationCount);
+        Assert.Equal(1, comparison.EnumerationCount);
+        Assert.Equal(SourceGuidanceSheetStatus.Incompatible, bundle.Sheets.Single().Status);
+        Assert.Empty(bundle.Sheets.Single().Translatable);
+    }
+
     private sealed class CountingEvidenceSource : IGuidanceEvidenceSource
     {
         private readonly GuidanceSheetMetadata _metadata;

@@ -82,7 +82,7 @@ public sealed class SourceGuidanceAnalyzer
 
                 if (analysis.Reasons.Count != 0)
                 {
-                    foreach (OpenInput input in presentInputs.Where(input => input.Sheets[sheetName].LanguageSafe))
+                    foreach (OpenInput input in presentInputs)
                     {
                         ScanSingle(input, sheetName, sheetIndex, sheetNames.Length, progress);
                     }

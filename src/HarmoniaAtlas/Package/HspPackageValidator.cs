@@ -7,7 +7,10 @@ namespace HarmoniaAtlas.Package;
 
 public static class HspPackageValidator
 {
-    public static HspPackageSummary Validate(string path)
+    public static HspPackageSummary Validate(string path) =>
+        Validate(path, materializationRoot: null);
+
+    public static HspPackageSummary Validate(string path, string? materializationRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         string fullPath = Path.GetFullPath(path);
@@ -16,7 +19,10 @@ public static class HspPackageValidator
             throw new FileNotFoundException("HSP package was not found.", fullPath);
         }
 
-        string? temporaryRoot = null;
+        bool ownsMaterializationRoot = materializationRoot is null;
+        string controlledRoot = materializationRoot is null
+            ? Path.Combine(Path.GetTempPath(), $"harmonia-atlas-hsp-{Guid.NewGuid():N}")
+            : Path.GetFullPath(materializationRoot);
         try
         {
             using FileStream stream = new(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -35,15 +41,14 @@ public static class HspPackageValidator
                 throw new HspFormatException("HSP archive contains an unlisted or missing entry.");
             }
 
-            temporaryRoot = Path.Combine(Path.GetTempPath(), $"harmonia-atlas-hsp-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(temporaryRoot);
+            Directory.CreateDirectory(controlledRoot);
             Dictionary<string, string> materialized = new(StringComparer.Ordinal);
             foreach (HspComponentDescriptor component in manifest.Components)
             {
                 ZipArchiveEntry entry = archive.GetEntry(component.Path)
                     ?? throw new HspFormatException($"HSP component '{component.Id}' is missing from the archive.");
                 bool materialize = component.Required && component.Kind is ("sourceHxs" or "sourceGuidance");
-                string? materializedPath = materialize ? MaterializedPath(temporaryRoot, component.Path) : null;
+                string? materializedPath = materialize ? MaterializedPath(controlledRoot, component.Path) : null;
                 ValidateComponent(entry, component, materializedPath);
                 if (materializedPath is not null)
                 {
@@ -81,9 +86,9 @@ public static class HspPackageValidator
         }
         finally
         {
-            if (temporaryRoot is not null)
+            if (ownsMaterializationRoot)
             {
-                TryDeleteDirectory(temporaryRoot);
+                TryDeleteDirectory(controlledRoot);
             }
         }
     }
