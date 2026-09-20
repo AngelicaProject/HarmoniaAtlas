@@ -14,9 +14,20 @@ public sealed record ExtractionSummary(
     long StringCount,
     string OutputPath);
 
+public sealed record ExtractionProgress(
+    string Sheet,
+    int SheetIndex,
+    int SheetCount,
+    long RowsProcessed,
+    bool SheetCompleted);
+
 public sealed class ExtractionEngine
 {
-    public ExtractionSummary Extract(string gamePath, string language, string outputPath)
+    public ExtractionSummary Extract(
+        string gamePath,
+        string language,
+        string outputPath,
+        Action<ExtractionProgress>? progress = null)
     {
         GameInstallation installation = GameInstallation.FromPath(gamePath);
         GameLanguage requestedLanguage = GameLanguageParser.Parse(language);
@@ -33,6 +44,8 @@ public sealed class ExtractionEngine
 
         foreach (string sheetName in sheetNames)
         {
+            int sheetIndex = Array.IndexOf(sheetNames, sheetName) + 1;
+            progress?.Invoke(new ExtractionProgress(sheetName, sheetIndex, sheetNames.Length, totalRows, false));
             LuminaSheet sheet = source.OpenSheet(sheetName);
             HarmoniaSheetInfo info = sheet.Info;
             byte[] schemaHash = HxsHashing.HashSchema(info.Name, info.Variant, info.Columns);
@@ -50,6 +63,7 @@ public sealed class ExtractionEngine
             HxsSheetHashAccumulator hashAccumulator = new(info.Name);
             int rowCount = 0;
             long stringCount = 0;
+            long lastProgressTimestamp = Environment.TickCount64;
 
             foreach (HarmoniaRowData row in sheet.EnumerateRows())
             {
@@ -58,6 +72,12 @@ public sealed class ExtractionEngine
                 hashAccumulator.AddRow(rowRecord);
                 rowCount = checked(rowCount + 1);
                 stringCount = checked(stringCount + rowRecord.StringCells.Count);
+                if (progress is not null &&
+                    (rowCount % 1000 == 0 || Environment.TickCount64 - lastProgressTimestamp >= 250))
+                {
+                    progress(new ExtractionProgress(sheetName, sheetIndex, sheetNames.Length, totalRows + rowCount, false));
+                    lastProgressTimestamp = Environment.TickCount64;
+                }
             }
 
             byte[] technicalHash = hashAccumulator.ComputeTechnicalHash();
@@ -74,6 +94,7 @@ public sealed class ExtractionEngine
             sheets.Add(completedSheet);
             totalRows = checked(totalRows + rowCount);
             totalStrings = checked(totalStrings + stringCount);
+            progress?.Invoke(new ExtractionProgress(sheetName, sheetIndex, sheetNames.Length, totalRows, true));
         }
 
         string contentId = HxsHashing.ComputeContentId(languageCode, sheets);

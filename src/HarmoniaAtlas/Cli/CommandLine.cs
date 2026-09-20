@@ -8,6 +8,7 @@ public enum CliCommand
     Verify,
     Inspect,
     Guidance,
+    Package,
 }
 
 public sealed record CliOptions(
@@ -16,6 +17,7 @@ public sealed record CliOptions(
     string? OutputPath = null,
     string? HxsPath = null,
     bool Json = false,
+    bool EventsJsonl = false,
     string? SourcePath = null,
     IReadOnlyList<string>? ComparePaths = null);
 
@@ -30,12 +32,13 @@ public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, st
 
 public static class CliUsage
 {
-    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect|guidance> [options]" + Environment.NewLine +
+    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect|guidance|package> [options]" + Environment.NewLine +
                                          "  harmonia-atlas --version" + Environment.NewLine +
                                          "  extract --game-path <path> --language <language> --output <path> [--json]" + Environment.NewLine +
                                          "  verify <path.hxs>" + Environment.NewLine +
                                          "  inspect <path.hxs> [--json]" + Environment.NewLine +
-                                         "  guidance --source <path.hxs> --compare <path.hxs> --output <path.hsg.json> [--json]";
+                                         "  guidance --source <path.hxs> --compare <path.hxs> --output <path.hsg.json> [--json]" + Environment.NewLine +
+                                         "  package --game-path <path> --language <language> --output <path.hsp> [--events jsonl]";
 }
 
 public static class CommandLineParser
@@ -60,6 +63,7 @@ public static class CommandLineParser
             "verify" => ParseSinglePathCommand(args, CliCommand.Verify),
             "inspect" => ParseInspect(args),
             "guidance" => ParseGuidance(args),
+            "package" => ParsePackage(args),
             _ => CliParseResult.Failure($"unknown command '{args[0]}'"),
         };
     }
@@ -242,6 +246,83 @@ public static class CommandLineParser
         return CliParseResult.Success(
             CliCommand.Guidance,
             new CliOptions(OutputPath: outputPath, Json: json, SourcePath: sourcePath, ComparePaths: comparePaths));
+    }
+
+    private static CliParseResult ParsePackage(IReadOnlyList<string> args)
+    {
+        string? gamePath = null;
+        string? language = null;
+        string? outputPath = null;
+        bool eventsJsonl = false;
+
+        for (int index = 1; index < args.Count; index++)
+        {
+            string option = args[index];
+            if (option == "--events")
+            {
+                if (index + 1 >= args.Count || !string.Equals(args[++index], "jsonl", StringComparison.Ordinal))
+                {
+                    return CliParseResult.Failure("--events supports only 'jsonl'");
+                }
+
+                if (eventsJsonl)
+                {
+                    return CliParseResult.Failure("--events was specified more than once");
+                }
+
+                eventsJsonl = true;
+                continue;
+            }
+
+            if (!TryReadValue(args, ref index, option, out string? value, out string? error))
+            {
+                return CliParseResult.Failure(error!);
+            }
+
+            switch (option)
+            {
+                case "--game-path":
+                    if (gamePath is not null)
+                    {
+                        return CliParseResult.Failure("--game-path was specified more than once");
+                    }
+
+                    gamePath = value;
+                    break;
+                case "--language":
+                    if (language is not null)
+                    {
+                        return CliParseResult.Failure("--language was specified more than once");
+                    }
+
+                    language = value;
+                    break;
+                case "--output":
+                    if (outputPath is not null)
+                    {
+                        return CliParseResult.Failure("--output was specified more than once");
+                    }
+
+                    outputPath = value;
+                    break;
+                default:
+                    return CliParseResult.Failure($"unknown package option '{option}'");
+            }
+        }
+
+        if (gamePath is null || language is null || outputPath is null)
+        {
+            return CliParseResult.Failure("package requires --game-path, --language, and --output");
+        }
+
+        if (!outputPath.EndsWith(".hsp", StringComparison.OrdinalIgnoreCase))
+        {
+            return CliParseResult.Failure("package --output must use the .hsp extension");
+        }
+
+        return CliParseResult.Success(
+            CliCommand.Package,
+            new CliOptions(GamePath: gamePath, Language: language, OutputPath: outputPath, EventsJsonl: eventsJsonl));
     }
 
     private static bool TryReadValue(

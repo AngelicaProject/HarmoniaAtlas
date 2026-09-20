@@ -38,6 +38,13 @@ public sealed class LuminaSheet
         _ => throw new NotSupportedException($"Unsupported Harmonia sheet variant: {Info.Variant}."),
     };
 
+    public IEnumerable<LuminaStringRow> EnumerateStringRows() => Info.Variant switch
+    {
+        HarmoniaSheetVariant.DefaultRows => EnumerateDefaultStringRows(),
+        HarmoniaSheetVariant.Subrows => EnumerateSubrowStringRows(),
+        _ => throw new NotSupportedException($"Unsupported Harmonia sheet variant: {Info.Variant}."),
+    };
+
     private IEnumerable<HarmoniaRowData> EnumerateDefaultRows()
     {
         ExcelSheet<RawRow> sheet = _defaultSheet ?? throw new InvalidOperationException("The default Lumina sheet is not initialized.");
@@ -72,11 +79,66 @@ public sealed class LuminaSheet
         }
     }
 
+    private IEnumerable<LuminaStringRow> EnumerateDefaultStringRows()
+    {
+        ExcelSheet<RawRow> sheet = _defaultSheet ?? throw new InvalidOperationException("The default Lumina sheet is not initialized.");
+        List<uint> rowIds = sheet.Select(row => row.RowId).ToList();
+        rowIds.Sort();
+        foreach (uint rowId in rowIds)
+        {
+            yield return ConvertStringRow(sheet.GetRow(rowId));
+        }
+    }
+
+    private IEnumerable<LuminaStringRow> EnumerateSubrowStringRows()
+    {
+        List<(uint RowId, ushort SubrowId)> coordinates = new();
+        SubrowExcelSheet<RawSubrow> sheet = _subrowSheet ?? throw new InvalidOperationException("The subrow Lumina sheet is not initialized.");
+        foreach (SubrowCollection<RawSubrow> collection in sheet)
+        {
+            foreach (RawSubrow row in collection)
+            {
+                coordinates.Add((row.RowId, row.SubrowId));
+            }
+        }
+
+        coordinates.Sort(static (left, right) =>
+        {
+            int rowComparison = left.RowId.CompareTo(right.RowId);
+            return rowComparison != 0 ? rowComparison : left.SubrowId.CompareTo(right.SubrowId);
+        });
+        foreach ((uint rowId, ushort subrowId) in coordinates)
+        {
+            yield return ConvertStringRow(sheet.GetSubrow(rowId, subrowId));
+        }
+    }
+
     private HarmoniaRowData ConvertRow(RawRow row) =>
         new(row.RowId, 0, _columns.Select(column => ReadCell(row, column)).ToArray());
 
     private HarmoniaRowData ConvertRow(RawSubrow row) =>
         new(row.RowId, row.SubrowId, _columns.Select(column => ReadCell(row, column)).ToArray());
+
+    private LuminaStringRow ConvertStringRow(RawRow row) =>
+        new(row.RowId, 0, ReadStringValues(column => ReadString(row, column)));
+
+    private LuminaStringRow ConvertStringRow(RawSubrow row) =>
+        new(row.RowId, row.SubrowId, ReadStringValues(column => ReadString(row, column)));
+
+    private IReadOnlyList<LuminaStringValue> ReadStringValues(Func<HarmoniaColumnDefinition, string> read)
+    {
+        return _columns
+            .Where(column => column.Type == HarmoniaColumnType.String)
+            .OrderBy(column => column.Index)
+            .Select(column => new LuminaStringValue(column.Index, read(column)))
+            .ToArray();
+    }
+
+    private static string ReadString(RawRow row, HarmoniaColumnDefinition column) =>
+        ((ReadOnlySeString)row.ReadStringColumn(column.Index)).ToMacroString();
+
+    private static string ReadString(RawSubrow row, HarmoniaColumnDefinition column) =>
+        ((ReadOnlySeString)row.ReadStringColumn(column.Index)).ToMacroString();
 
     private static HarmoniaCellData ReadCell(RawRow row, HarmoniaColumnDefinition column) =>
         ReadCellCore(column, type => ReadRawValue(row, column.Index, type));

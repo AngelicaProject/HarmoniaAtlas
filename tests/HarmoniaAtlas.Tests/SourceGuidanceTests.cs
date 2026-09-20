@@ -482,6 +482,65 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
+    public void HxsEvidenceUsesTheSharedLanguageSafetyRuleAndFailsClosed()
+    {
+        string unsafeJapanese = CreateSnapshot("ja", [SheetWithLanguage("Item", "en", ["英語 fallback"])]);
+        string neutral = CreateSnapshot("en", [SheetWithLanguage("Item", "none", ["English"])]) ;
+        string safeJapanese = CreateSnapshot("ja", [SheetWithLanguage("Item", "ja", ["日本語"])]) ;
+        try
+        {
+            using HxsGuidanceEvidenceSource unsafeInput = HxsGuidanceEvidenceSource.OpenVerified(unsafeJapanese);
+            using HxsGuidanceEvidenceSource neutralInput = HxsGuidanceEvidenceSource.OpenVerified(neutral);
+            using HxsGuidanceEvidenceSource safeInput = HxsGuidanceEvidenceSource.OpenVerified(safeJapanese);
+            Assert.False(unsafeInput.Sheets["Item"].LanguageSafe);
+            Assert.True(neutralInput.Sheets["Item"].LanguageSafe);
+            Assert.True(safeInput.Sheets["Item"].LanguageSafe);
+            Assert.Equal(GuidanceLanguageSafety.IsSafe("ja", "en"), unsafeInput.Sheets["Item"].LanguageSafe);
+            Assert.Equal(GuidanceLanguageSafety.IsSafe("en", "none"), neutralInput.Sheets["Item"].LanguageSafe);
+            Assert.Equal(GuidanceLanguageSafety.IsSafe("ja", "ja"), safeInput.Sheets["Item"].LanguageSafe);
+
+            SourceGuidanceBundle bundle = new SourceGuidanceAnalyzer().Analyze(unsafeInput, [neutralInput]);
+            SourceGuidanceSheet sheet = bundle.Sheets.Single();
+            Assert.Equal(SourceGuidanceSheetStatus.Incompatible, sheet.Status);
+            Assert.Empty(sheet.Translatable);
+            Assert.Contains(SourceGuidanceIncompatibilityReason.RowTopologyMismatch, sheet.IncompatibilityReasons);
+        }
+        finally
+        {
+            Delete(unsafeJapanese);
+            Delete(neutral);
+            Delete(safeJapanese);
+        }
+    }
+
+    [Fact]
+    public void UnsafePhysicalRowsChangeEvidenceIdWhileSheetsRemainIncompatible()
+    {
+        string unsafeA = CreateSnapshot("ja", [SheetWithLanguage("Item", "en", ["fallback A"])]);
+        string unsafeB = CreateSnapshot("ja", [SheetWithLanguage("Item", "en", ["fallback B"])]);
+        string comparison = CreateSnapshot("en", [SheetWithLanguage("Item", "en", ["English"])]) ;
+        try
+        {
+            SourceGuidanceBundle first = Analyze(unsafeA, [comparison]);
+            SourceGuidanceBundle second = Analyze(unsafeB, [comparison]);
+
+            Assert.Equal(SourceGuidanceSheetStatus.Incompatible, Assert.Single(first.Sheets).Status);
+            Assert.Equal(SourceGuidanceSheetStatus.Incompatible, Assert.Single(second.Sheets).Status);
+            Assert.Empty(first.Sheets.Single().Translatable);
+            Assert.Empty(second.Sheets.Single().Translatable);
+            Assert.NotEqual(
+                first.EvidenceInputs.Single(input => input.Language == "ja").EvidenceId,
+                second.EvidenceInputs.Single(input => input.Language == "ja").EvidenceId);
+        }
+        finally
+        {
+            Delete(unsafeA);
+            Delete(unsafeB);
+            Delete(comparison);
+        }
+    }
+
+    [Fact]
     public void GenerationFailureDoesNotPublishFinalOrPartialGuidance()
     {
         string invalid = NewPath();
@@ -553,6 +612,9 @@ public sealed class SourceGuidanceTests
                 .Select(index => new HarmoniaColumnDefinition(index, index * 4, HarmoniaColumnType.String))
                 .ToArray(),
             rows.Select(values => new RowSpec(values)).ToArray());
+
+    private static SheetSpec SheetWithLanguage(string name, string effectiveLanguage, params string[][] rows) =>
+        Sheet(name, rows) with { EffectiveLanguage = effectiveLanguage };
 
     private static string CreateSnapshot(string language, params SheetSpec[] sheets) =>
         CreateSnapshot(language, sheets, "game", "full");
@@ -706,7 +768,7 @@ public sealed class SourceGuidanceTests
         return (new HxsSheetRecord(
             specification.Name,
             HarmoniaSheetVariant.DefaultRows,
-            "none",
+            specification.EffectiveLanguage,
             specification.Columns,
             rows.Count,
             schemaHash,
@@ -715,7 +777,11 @@ public sealed class SourceGuidanceTests
             HxsHashing.HashSheetContent(specification.Name, HarmoniaSheetVariant.DefaultRows, schemaHash, technicalSheetHash, stringSheetHash)), rows);
     }
 
-    private sealed record SheetSpec(string Name, IReadOnlyList<HarmoniaColumnDefinition> Columns, IReadOnlyList<RowSpec> Rows);
+    private sealed record SheetSpec(
+        string Name,
+        IReadOnlyList<HarmoniaColumnDefinition> Columns,
+        IReadOnlyList<RowSpec> Rows,
+        string EffectiveLanguage = "none");
 
     private sealed record RowSpec(IReadOnlyList<string> Values, ushort SubrowId = 0, IReadOnlyList<byte[]?>? RawValues = null);
 

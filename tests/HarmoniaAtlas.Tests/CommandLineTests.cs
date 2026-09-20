@@ -95,4 +95,37 @@ public sealed class CommandLineTests
         Assert.NotNull(result.Error);
         Assert.Contains("duplicated", result.Error, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void PackageCommandRecognizesJsonlEvents()
+    {
+        CliParseResult result = CommandLineParser.Parse(
+        [
+            "package",
+            "--game-path", "C:\\ffxiv",
+            "--language", "en",
+            "--output", "source-en.hsp",
+            "--events", "jsonl",
+        ]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(CliCommand.Package, result.Command);
+        Assert.True(result.Options!.EventsJsonl);
+    }
+
+    [Fact]
+    public void PackageCommandRejectsUnsupportedEventFormat()
+    {
+        CliParseResult result = CommandLineParser.Parse(
+        [
+            "package",
+            "--game-path", "C:\\ffxiv",
+            "--language", "en",
+            "--output", "source-en.hsp",
+            "--events", "json",
+        ]);
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("jsonl", result.Error, StringComparison.Ordinal);
+    }
 }
