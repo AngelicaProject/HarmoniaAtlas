@@ -5,8 +5,6 @@ namespace HarmoniaAtlas.Guidance;
 
 public sealed class SourceGuidanceAnalyzer
 {
-    private const string TextNamespacePrefix = "TEXT_";
-
     public SourceGuidanceBundle Analyze(IReadOnlyList<string> inputPaths)
     {
         ArgumentNullException.ThrowIfNull(inputPaths);
@@ -82,8 +80,7 @@ public sealed class SourceGuidanceAnalyzer
                 first.Metadata.Scope,
                 string.Empty,
                 guidanceInputs,
-                new SourceGuidanceEligibility(1, guidanceSheets),
-                null);
+                guidanceSheets);
             return withoutBundleId with { BundleId = SourceGuidanceHashing.ComputeBundleId(withoutBundleId) };
         }
         finally
@@ -138,67 +135,48 @@ public sealed class SourceGuidanceAnalyzer
 
         reasons = reasons.Distinct().OrderBy(reason => (int)reason).ToList();
         string schemaHash = SourceGuidanceHashing.ToHashString(representative.SchemaHash);
-        string[] languages = inputs.Select(input => input.Verified.Metadata.Language).ToArray();
         if (reasons.Count != 0)
         {
-            return IncompatibleSheet(sheetName, schemaHash, representative.Columns, languages, reasons);
+            return IncompatibleSheet(sheetName, schemaHash, reasons);
         }
 
-        List<HarmoniaColumnDefinition> stringColumns = representative.Columns
-            .Where(column => column.Type == HarmoniaColumnType.String)
-            .OrderBy(column => column.Index)
-            .ToList();
-        if (!TryAnalyzeRows(sheetName, stringColumns, inputs, out List<ColumnAccumulator> accumulators))
+        if (!TryAnalyzeRows(sheetName, representative.Columns, inputs, out List<SourceGuidanceOccurrence> translatable))
         {
             reasons.Add(SourceGuidanceIncompatibilityReason.RowTopologyMismatch);
-            return IncompatibleSheet(sheetName, schemaHash, representative.Columns, languages, reasons);
+            return IncompatibleSheet(sheetName, schemaHash, reasons);
         }
 
-        SourceGuidanceColumn[] columns = stringColumns
-            .Select((column, index) => accumulators[index].CreateColumn(column.Index, languages))
-            .ToArray();
         return new SourceGuidanceSheet(
             sheetName,
-            SourceGuidanceSheetStatus.Compatible,
             schemaHash,
-            columns,
+            SourceGuidanceSheetStatus.Compatible,
+            translatable,
             Array.Empty<SourceGuidanceIncompatibilityReason>());
     }
 
     private static SourceGuidanceSheet IncompatibleSheet(
         string sheetName,
         string schemaHash,
-        IReadOnlyList<HarmoniaColumnDefinition> columns,
-        IReadOnlyList<string> languages,
-        IReadOnlyList<SourceGuidanceIncompatibilityReason> reasons)
-    {
-        SourceGuidanceColumn[] guidanceColumns = columns
-            .Where(column => column.Type == HarmoniaColumnType.String)
-            .OrderBy(column => column.Index)
-            .Select(column => new SourceGuidanceColumn(
-                column.Index,
-                SourceGuidanceRole.Unknown,
-                new SourceGuidanceEvidence(
-                    SourceGuidanceEvidenceKind.IncompatibleSourceLayout,
-                    languages,
-                    0,
-                    0)))
-            .ToArray();
-        return new SourceGuidanceSheet(
+        IReadOnlyList<SourceGuidanceIncompatibilityReason> reasons) =>
+        new(
             sheetName,
-            SourceGuidanceSheetStatus.Incompatible,
             schemaHash,
-            guidanceColumns,
+            SourceGuidanceSheetStatus.Incompatible,
+            Array.Empty<SourceGuidanceOccurrence>(),
             reasons);
-    }
 
     private static bool TryAnalyzeRows(
         string sheetName,
-        IReadOnlyList<HarmoniaColumnDefinition> stringColumns,
+        IReadOnlyList<HarmoniaColumnDefinition> columns,
         IReadOnlyList<OpenInput> inputs,
-        out List<ColumnAccumulator> accumulators)
+        out List<SourceGuidanceOccurrence> translatable)
     {
-        accumulators = stringColumns.Select(_ => new ColumnAccumulator()).ToList();
+        translatable = new();
+        List<int> stringColumnIndexes = columns
+            .Where(column => column.Type == HarmoniaColumnType.String)
+            .Select(column => column.Index)
+            .OrderBy(index => index)
+            .ToList();
         List<IEnumerator<HxsStringRowRecord>> enumerators = inputs
             .Select(input => input.Reader.ReadStringRows(sheetName).GetEnumerator())
             .ToList();
@@ -232,28 +210,33 @@ public sealed class SourceGuidanceAnalyzer
                 }
 
                 int[] cellIndexes = new int[currentRows.Length];
-                for (int columnIndex = 0; columnIndex < stringColumns.Count; columnIndex++)
+                foreach (int columnIndex in stringColumnIndexes)
                 {
-                    int expectedColumnIndex = stringColumns[columnIndex].Index;
                     string[] macroTexts = new string[currentRows.Length];
                     for (int inputIndex = 0; inputIndex < currentRows.Length; inputIndex++)
                     {
                         HxsStringRowRecord row = currentRows[inputIndex]!;
                         int cellIndex = cellIndexes[inputIndex];
-                        if (cellIndex >= row.StringCells.Count || row.StringCells[cellIndex].ColumnIndex != expectedColumnIndex)
+                        if (cellIndex >= row.Values.Count || row.Values[cellIndex].ColumnIndex != columnIndex)
                         {
                             throw new SourceGuidanceException(
-                                $"Verified HXS sheet '{sheetName}' does not have canonical String-cell coverage at column {expectedColumnIndex}.");
+                                $"Verified HXS sheet '{sheetName}' does not have canonical String-cell coverage at column {columnIndex}.");
                         }
 
-                        macroTexts[inputIndex] = row.StringCells[cellIndex].MacroText;
+                        macroTexts[inputIndex] = row.Values[cellIndex].MacroText;
                         cellIndexes[inputIndex] = cellIndex + 1;
                     }
 
-                    accumulators[columnIndex].Observe(macroTexts);
+                    if (macroTexts.Skip(1).Any(value => !string.Equals(macroTexts[0], value, StringComparison.Ordinal)))
+                    {
+                        translatable.Add(new SourceGuidanceOccurrence(
+                            currentRows[0]!.RowId,
+                            currentRows[0]!.SubrowId,
+                            columnIndex));
+                    }
                 }
 
-                if (Enumerable.Range(0, currentRows.Length).Any(index => cellIndexes[index] != currentRows[index]!.StringCells.Count))
+                if (Enumerable.Range(0, currentRows.Length).Any(index => cellIndexes[index] != currentRows[index]!.Values.Count))
                 {
                     throw new SourceGuidanceException($"Verified HXS sheet '{sheetName}' contains an unexpected String cell.");
                 }
@@ -282,74 +265,4 @@ public sealed class SourceGuidanceAnalyzer
         VerifiedInput Verified,
         HxsReader Reader,
         IReadOnlyDictionary<string, HxsSheetRecord> Sheets);
-
-    private sealed class ColumnAccumulator
-    {
-        private bool _hasNonEmptyValue;
-        private bool _allNonEmptyValuesUseTextNamespace = true;
-        private long _comparableOccurrences;
-        private long _varyingOccurrences;
-
-        public void Observe(IReadOnlyList<string> macroTexts)
-        {
-            _comparableOccurrences = checked(_comparableOccurrences + 1);
-            string first = macroTexts[0];
-            bool varying = macroTexts.Skip(1).Any(value => !string.Equals(first, value, StringComparison.Ordinal));
-            if (varying)
-            {
-                _varyingOccurrences = checked(_varyingOccurrences + 1);
-            }
-
-            foreach (string macroText in macroTexts)
-            {
-                if (macroText.Length == 0)
-                {
-                    continue;
-                }
-
-                _hasNonEmptyValue = true;
-                if (!macroText.StartsWith(TextNamespacePrefix, StringComparison.Ordinal))
-                {
-                    _allNonEmptyValuesUseTextNamespace = false;
-                }
-            }
-        }
-
-        public SourceGuidanceColumn CreateColumn(int columnIndex, IReadOnlyList<string> languages)
-        {
-            if (_hasNonEmptyValue && _allNonEmptyValuesUseTextNamespace)
-            {
-                return new SourceGuidanceColumn(
-                    columnIndex,
-                    SourceGuidanceRole.Context,
-                    new SourceGuidanceEvidence(
-                        SourceGuidanceEvidenceKind.KnownTechnicalNamespace,
-                        languages,
-                        0,
-                        0,
-                        TextNamespacePrefix));
-            }
-
-            if (_varyingOccurrences > 0)
-            {
-                return new SourceGuidanceColumn(
-                    columnIndex,
-                    SourceGuidanceRole.Translatable,
-                    new SourceGuidanceEvidence(
-                        SourceGuidanceEvidenceKind.OfficialLanguageVariance,
-                        languages,
-                        _comparableOccurrences,
-                        _varyingOccurrences));
-            }
-
-            return new SourceGuidanceColumn(
-                columnIndex,
-                SourceGuidanceRole.Unknown,
-                new SourceGuidanceEvidence(
-                    SourceGuidanceEvidenceKind.NoOfficialLanguageVariance,
-                    languages,
-                    _comparableOccurrences,
-                    0));
-        }
-    }
 }

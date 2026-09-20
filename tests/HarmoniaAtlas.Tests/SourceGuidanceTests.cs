@@ -23,40 +23,29 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void GuidanceRejectsDuplicateLanguage()
+    public void GuidanceRejectsDuplicateLanguageAndMismatchedMetadata()
     {
-        string first = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
-        string second = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
+        string duplicateEn = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
+        string duplicateEn2 = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
+        string gameEn = CreateSnapshot("en", [Sheet("Item", ["Fire Shard"])], gameVersion: "2026.09");
+        string gameJa = CreateSnapshot("ja", [Sheet("Item", ["ファイアシャード"])], gameVersion: "2026.08");
+        string scopeEn = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
+        string scopeJa = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード"]));
+        SetScope(scopeJa, "partial");
         try
         {
-            Assert.Throws<SourceGuidanceException>(() => new SourceGuidanceAnalyzer().Analyze([first, second]));
+            Assert.Throws<SourceGuidanceException>(() => new SourceGuidanceAnalyzer().Analyze([duplicateEn, duplicateEn2]));
+            Assert.Throws<SourceGuidanceException>(() => new SourceGuidanceAnalyzer().Analyze([gameEn, gameJa]));
+            Assert.Throws<SourceGuidanceException>(() => new SourceGuidanceAnalyzer().Analyze([scopeEn, scopeJa]));
         }
         finally
         {
-            Delete(first);
-            Delete(second);
-        }
-    }
-
-    [Fact]
-    public void GuidanceRejectsDifferentGameVersionAndScope()
-    {
-        string gameA = CreateSnapshot("en", [Sheet("Item", ["Fire Shard"])], gameVersion: "2026.09");
-        string gameB = CreateSnapshot("ja", [Sheet("Item", ["ファイアシャード"])], gameVersion: "2026.08");
-        string scopeA = CreateSnapshot("en", [Sheet("Item", ["Fire Shard"])], scope: "full");
-        string scopeB = CreateSnapshot("ja", [Sheet("Item", ["ファイアシャード"])], scope: "full");
-        SetScope(scopeB, "partial");
-        try
-        {
-            Assert.Throws<SourceGuidanceException>(() => new SourceGuidanceAnalyzer().Analyze([gameA, gameB]));
-            Assert.Throws<SourceGuidanceException>(() => new SourceGuidanceAnalyzer().Analyze([scopeA, scopeB]));
-        }
-        finally
-        {
-            Delete(gameA);
-            Delete(gameB);
-            Delete(scopeA);
-            Delete(scopeB);
+            Delete(duplicateEn);
+            Delete(duplicateEn2);
+            Delete(gameEn);
+            Delete(gameJa);
+            Delete(scopeEn);
+            Delete(scopeJa);
         }
     }
 
@@ -78,22 +67,19 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void OfficialLanguageVarianceMakesAStringColumnTranslatable()
+    public void ExactVarianceAddsOnlyThatOccurrenceToTheAllowlist()
     {
-        string en = CreateSnapshot("en", Sheet("Item", ["Fire Shard", "Item description"]));
-        string ja = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード", "アイテムの説明"]));
-        string de = CreateSnapshot("de", Sheet("Item", ["Feuerscherbe", "Gegenstandsbeschreibung"]));
-        string fr = CreateSnapshot("fr", Sheet("Item", ["Éclat de feu", "Description de l'objet"]));
+        string en = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
+        string ja = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード"]));
+        string de = CreateSnapshot("de", Sheet("Item", ["Feuerscherbe"]));
+        string fr = CreateSnapshot("fr", Sheet("Item", ["Éclat de feu"]));
         try
         {
-            SourceGuidanceSheet item = Analyze([en, ja, de, fr]).Eligibility.Sheets.Single();
+            SourceGuidanceSheet sheet = Analyze([en, ja, de, fr]).Sheets.Single();
+            SourceGuidanceOccurrence occurrence = Assert.Single(sheet.Translatable);
 
-            Assert.Equal(SourceGuidanceRole.Translatable, item.Columns[0].Role);
-            Assert.Equal(SourceGuidanceEvidenceKind.OfficialLanguageVariance, item.Columns[0].Evidence.Kind);
-            Assert.Equal(1, item.Columns[0].Evidence.ComparableOccurrences);
-            Assert.Equal(1, item.Columns[0].Evidence.VaryingOccurrences);
-            Assert.Equal(SourceGuidanceRole.Translatable, item.Columns[1].Role);
-            Assert.Equal(["de", "en", "fr", "ja"], item.Columns[0].Evidence.Languages);
+            Assert.Equal(new SourceGuidanceOccurrence(1, 0, 0), occurrence);
+            Assert.Equal(SourceGuidanceSheetStatus.Compatible, sheet.Status);
         }
         finally
         {
@@ -105,7 +91,7 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void InvariantStringColumnRemainsUnknown()
+    public void InvariantTechnicalLookingOccurrenceIsAbsent()
     {
         string en = CreateSnapshot("en", Sheet("ChatBubbleType", ["LogChatBubbleShoutFontColor"]));
         string ja = CreateSnapshot("ja", Sheet("ChatBubbleType", ["LogChatBubbleShoutFontColor"]));
@@ -113,11 +99,9 @@ public sealed class SourceGuidanceTests
         string fr = CreateSnapshot("fr", Sheet("ChatBubbleType", ["LogChatBubbleShoutFontColor"]));
         try
         {
-            SourceGuidanceColumn column = Analyze([en, ja, de, fr]).Eligibility.Sheets.Single().Columns.Single();
+            SourceGuidanceSheet sheet = Analyze([en, ja, de, fr]).Sheets.Single();
 
-            Assert.Equal(SourceGuidanceRole.Unknown, column.Role);
-            Assert.Equal(SourceGuidanceEvidenceKind.NoOfficialLanguageVariance, column.Evidence.Kind);
-            Assert.Equal(0, column.Evidence.VaryingOccurrences);
+            Assert.Empty(sheet.Translatable);
         }
         finally
         {
@@ -129,17 +113,41 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void EmptyAndNonEmptyValuesCountAsVariance()
+    public void MixedUseColumnAllowsOnlyTheVaryingRow()
     {
-        string en = CreateSnapshot("en", Sheet("Item", [""]));
-        string ja = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード"]));
+        string en = CreateSnapshot("en", Sheet("Mixed", ["LogChatBubbleShoutFontColor"], ["Hello"]));
+        string ja = CreateSnapshot("ja", Sheet("Mixed", ["LogChatBubbleShoutFontColor"], ["こんにちは"]));
+        string de = CreateSnapshot("de", Sheet("Mixed", ["LogChatBubbleShoutFontColor"], ["Hallo"]));
+        string fr = CreateSnapshot("fr", Sheet("Mixed", ["LogChatBubbleShoutFontColor"], ["Bonjour"]));
         try
         {
-            SourceGuidanceColumn column = Analyze([en, ja]).Eligibility.Sheets.Single().Columns.Single();
+            SourceGuidanceSheet sheet = Analyze([en, ja, de, fr]).Sheets.Single();
+            SourceGuidanceOccurrence occurrence = Assert.Single(sheet.Translatable);
 
-            Assert.Equal(SourceGuidanceRole.Translatable, column.Role);
-            Assert.Equal(1, column.Evidence.ComparableOccurrences);
-            Assert.Equal(1, column.Evidence.VaryingOccurrences);
+            Assert.Equal(2u, occurrence.RowId);
+            Assert.Equal((ushort)0, occurrence.SubrowId);
+            Assert.Equal(0, occurrence.ColumnIndex);
+        }
+        finally
+        {
+            Delete(en);
+            Delete(ja);
+            Delete(de);
+            Delete(fr);
+        }
+    }
+
+    [Fact]
+    public void QuestLikeInvariantIdentifierIsAbsentWhileDialogueIsAllowed()
+    {
+        string en = CreateSnapshot("en", Sheet("Quest", ["TEXT_QUEST_001", "Greetings and welcome"]));
+        string ja = CreateSnapshot("ja", Sheet("Quest", ["TEXT_QUEST_001", "こんにちは"]));
+        try
+        {
+            SourceGuidanceSheet sheet = Analyze([en, ja]).Sheets.Single();
+            SourceGuidanceOccurrence occurrence = Assert.Single(sheet.Translatable);
+
+            Assert.Equal(1, occurrence.ColumnIndex);
         }
         finally
         {
@@ -149,22 +157,53 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void RawValueDifferencesAloneDoNotCreateLocalizationEvidence()
+    public void ItemLikeVaryingStringCellsAreIndependentlyAllowed()
+    {
+        string en = CreateSnapshot("en", Sheet("Item", ["Fire Shard", "A small shard", "Fire Shard"]));
+        string ja = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード", "小さな欠片", "ファイアシャード"]));
+        try
+        {
+            SourceGuidanceSheet sheet = Analyze([en, ja]).Sheets.Single();
+
+            Assert.Equal([0, 1, 2], sheet.Translatable.Select(occurrence => occurrence.ColumnIndex));
+        }
+        finally
+        {
+            Delete(en);
+            Delete(ja);
+        }
+    }
+
+    [Fact]
+    public void EmptyAndNonEmptyValuesCountAsVariance()
+    {
+        string en = CreateSnapshot("en", Sheet("Item", [""]));
+        string ja = CreateSnapshot("ja", Sheet("Item", ["こんにちは"]));
+        try
+        {
+            Assert.Equal(new SourceGuidanceOccurrence(1, 0, 0), Assert.Single(Analyze([en, ja]).Sheets.Single().Translatable));
+        }
+        finally
+        {
+            Delete(en);
+            Delete(ja);
+        }
+    }
+
+    [Fact]
+    public void RawValueDifferencesAloneDoNotCreatePermission()
     {
         string en = CreateSnapshot("en", new SheetSpec(
             "Item",
             [new HarmoniaColumnDefinition(0, 0, HarmoniaColumnType.String)],
-            [new RowSpec(["same"], 0, new byte[]?[] { [1] })]));
+            [new RowSpec(["same"], RawValues: new byte[]?[] { [1] })]));
         string ja = CreateSnapshot("ja", new SheetSpec(
             "Item",
             [new HarmoniaColumnDefinition(0, 0, HarmoniaColumnType.String)],
-            [new RowSpec(["same"], 0, new byte[]?[] { [2] })]));
+            [new RowSpec(["same"], RawValues: new byte[]?[] { [2] })]));
         try
         {
-            SourceGuidanceColumn column = Analyze([en, ja]).Eligibility.Sheets.Single().Columns.Single();
-
-            Assert.Equal(SourceGuidanceRole.Unknown, column.Role);
-            Assert.Equal(SourceGuidanceEvidenceKind.NoOfficialLanguageVariance, column.Evidence.Kind);
+            Assert.Empty(Analyze([en, ja]).Sheets.Single().Translatable);
         }
         finally
         {
@@ -174,66 +213,31 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void ExactTextNamespaceMakesAColumnContextOnlyWhenEveryNonEmptyValueMatches()
-    {
-        string en = CreateSnapshot("en", Sheet("Quest", ["TEXT_QUEST_001", "Hello"] , ["TEXT_QUEST_002", "Goodbye"]));
-        string ja = CreateSnapshot("ja", Sheet("Quest", ["TEXT_QUEST_001", "こんにちは"], ["TEXT_QUEST_002", "さようなら"]));
-        try
-        {
-            SourceGuidanceSheet quest = Analyze([en, ja]).Eligibility.Sheets.Single();
-
-            Assert.Equal(SourceGuidanceRole.Context, quest.Columns[0].Role);
-            Assert.Equal(SourceGuidanceEvidenceKind.KnownTechnicalNamespace, quest.Columns[0].Evidence.Kind);
-            Assert.Equal("TEXT_", quest.Columns[0].Evidence.Prefix);
-            Assert.Equal(SourceGuidanceRole.Translatable, quest.Columns[1].Role);
-        }
-        finally
-        {
-            Delete(en);
-            Delete(ja);
-        }
-
-        string mixedEn = CreateSnapshot("en", Sheet("Quest", ["TEXT_ABC"], ["Normal user-visible text"]));
-        string mixedJa = CreateSnapshot("ja", Sheet("Quest", ["TEXT_ABC"], ["Normal user-visible text"]));
-        try
-        {
-            SourceGuidanceColumn column = Analyze([mixedEn, mixedJa]).Eligibility.Sheets.Single().Columns.Single();
-            Assert.Equal(SourceGuidanceRole.Unknown, column.Role);
-            Assert.NotEqual(SourceGuidanceEvidenceKind.KnownTechnicalNamespace, column.Evidence.Kind);
-        }
-        finally
-        {
-            Delete(mixedEn);
-            Delete(mixedJa);
-        }
-    }
-
-    [Fact]
-    public void SchemaAndTopologyMismatchesFailClosed()
+    public void SchemaAndTopologyMismatchesFailClosedWithEmptyAllowlists()
     {
         string schemaEn = CreateSnapshot("en", Sheet("Item", ["one"]));
         string schemaJa = CreateSnapshot(
             "ja",
-            [new SheetSpec(
+            new SheetSpec(
                 "Item",
                 [
                     new HarmoniaColumnDefinition(0, 0, HarmoniaColumnType.String),
                     new HarmoniaColumnDefinition(1, 4, HarmoniaColumnType.String),
                 ],
-                [new RowSpec(["uno", "two"])])]);
+                [new RowSpec(["uno", "dos"])]) );
         string topologyEn = CreateSnapshot("en", Sheet("Quest", ["one"]));
         string topologyJa = CreateSnapshot("ja", Sheet("Quest", ["uno"], ["dos"]));
         try
         {
-            SourceGuidanceSheet schemaSheet = Analyze([schemaEn, schemaJa]).Eligibility.Sheets.Single();
+            SourceGuidanceSheet schemaSheet = Analyze([schemaEn, schemaJa]).Sheets.Single();
             Assert.Equal(SourceGuidanceSheetStatus.Incompatible, schemaSheet.Status);
+            Assert.Empty(schemaSheet.Translatable);
             Assert.Contains(SourceGuidanceIncompatibilityReason.ColumnDefinitionMismatch, schemaSheet.IncompatibilityReasons);
-            Assert.DoesNotContain(schemaSheet.Columns, column => column.Role == SourceGuidanceRole.Translatable);
 
-            SourceGuidanceSheet topologySheet = Analyze([topologyEn, topologyJa]).Eligibility.Sheets.Single();
+            SourceGuidanceSheet topologySheet = Analyze([topologyEn, topologyJa]).Sheets.Single();
             Assert.Equal(SourceGuidanceSheetStatus.Incompatible, topologySheet.Status);
+            Assert.Empty(topologySheet.Translatable);
             Assert.Contains(SourceGuidanceIncompatibilityReason.RowTopologyMismatch, topologySheet.IncompatibilityReasons);
-            Assert.DoesNotContain(topologySheet.Columns, column => column.Role == SourceGuidanceRole.Translatable);
         }
         finally
         {
@@ -245,18 +249,17 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void MissingSheetIsEmittedAsIncompatibleAndUnknown()
+    public void MissingSheetIsEmittedAsIncompatibleWithEmptyAllowlist()
     {
         string en = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]), Sheet("OnlyEnglish", ["Technical"]));
         string ja = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード"]));
         try
         {
-            SourceGuidanceBundle bundle = Analyze([en, ja]);
-            SourceGuidanceSheet missing = bundle.Eligibility.Sheets.Single(sheet => sheet.Name == "OnlyEnglish");
+            SourceGuidanceSheet missing = Analyze([en, ja]).Sheets.Single(sheet => sheet.Name == "OnlyEnglish");
 
             Assert.Equal(SourceGuidanceSheetStatus.Incompatible, missing.Status);
+            Assert.Empty(missing.Translatable);
             Assert.Contains(SourceGuidanceIncompatibilityReason.MissingInInput, missing.IncompatibilityReasons);
-            Assert.All(missing.Columns, column => Assert.Equal(SourceGuidanceRole.Unknown, column.Role));
         }
         finally
         {
@@ -266,7 +269,7 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void GuidanceIsDeterministicAndRoundTripsItsPersistedContract()
+    public void GuidanceIsDeterministicAndReaderRejectsTamperedCoordinates()
     {
         string en = CreateSnapshot("en", Sheet("Item", ["Fire Shard"]));
         string ja = CreateSnapshot("ja", Sheet("Item", ["ファイアシャード"]));
@@ -277,14 +280,18 @@ public sealed class SourceGuidanceTests
         try
         {
             new SourceGuidanceGenerator().Generate([en, ja, de, fr], firstOutput);
-            new SourceGuidanceGenerator().Generate([fr, en, de, ja], secondOutput);
+            new SourceGuidanceGenerator().Generate([fr, de, en, ja], secondOutput);
 
             Assert.Equal(File.ReadAllBytes(firstOutput), File.ReadAllBytes(secondOutput));
             SourceGuidanceBundle bundle = SourceGuidanceReader.Read(firstOutput);
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(firstOutput));
+            Assert.True(document.RootElement.TryGetProperty("sheets", out _));
+            Assert.False(document.RootElement.TryGetProperty("semantics", out _));
             Assert.Equal(bundle.BundleId, SourceGuidanceReader.Read(secondOutput).BundleId);
-            Assert.Null(bundle.Semantics);
-            Assert.DoesNotContain(Path.GetFullPath(en), File.ReadAllText(firstOutput));
-            Assert.EndsWith("\n", File.ReadAllText(firstOutput));
+
+            string tampered = File.ReadAllText(firstOutput).Replace("\"columnIndex\": 0", "\"columnIndex\": 1", StringComparison.Ordinal);
+            File.WriteAllText(firstOutput, tampered);
+            Assert.Throws<SourceGuidanceFormatException>(() => SourceGuidanceReader.Read(firstOutput));
         }
         finally
         {
@@ -376,16 +383,18 @@ public sealed class SourceGuidanceTests
             RowSpec sourceRow = specification.Rows[index];
             uint rowId = checked((uint)(index + 1));
             HxsStringCellRecord[] cells = sourceRow.Values
-                .Select((value, columnIndex) => new HxsStringCellRecord(
-                    rowId,
-                    sourceRow.SubrowId,
-                    columnIndex,
-                    value,
-                    sourceRow.RawValues is null ? null : sourceRow.RawValues[columnIndex],
-                    HxsHashing.HashMacro(value),
-                    sourceRow.RawValues is null || sourceRow.RawValues[columnIndex] is null
-                        ? null
-                        : HxsHashing.HashRaw(sourceRow.RawValues[columnIndex]!)))
+                .Select((value, columnIndex) =>
+                {
+                    byte[]? rawValue = sourceRow.RawValues is null ? null : sourceRow.RawValues[columnIndex];
+                    return new HxsStringCellRecord(
+                        rowId,
+                        sourceRow.SubrowId,
+                        columnIndex,
+                        value,
+                        rawValue,
+                        HxsHashing.HashMacro(value),
+                        rawValue is null ? null : HxsHashing.HashRaw(rawValue));
+                })
                 .ToArray();
             byte[] technicalHash = HxsHashing.HashRowTechnical(specification.Name, rowId, sourceRow.SubrowId, Array.Empty<HxsTechnicalCell>());
             byte[] stringHash = HxsHashing.HashRowStrings(specification.Name, rowId, sourceRow.SubrowId, cells);
@@ -423,19 +432,6 @@ public sealed class SourceGuidanceTests
     private static string NewPath(string extension = ".hxs") =>
         Path.Combine(Path.GetTempPath(), $"harmonia-atlas-guidance-{Guid.NewGuid():N}{extension}");
 
-    private static void Delete(string path)
-    {
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-
-        if (File.Exists(path + ".partial"))
-        {
-            File.Delete(path + ".partial");
-        }
-    }
-
     private static void SetScope(string path, string scope)
     {
         using SqliteConnection connection = new(new SqliteConnectionStringBuilder
@@ -449,5 +445,18 @@ public sealed class SourceGuidanceTests
         command.CommandText = "UPDATE hxs_meta SET scope = $scope WHERE id = 1;";
         command.Parameters.AddWithValue("$scope", scope);
         command.ExecuteNonQuery();
+    }
+
+    private static void Delete(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        if (File.Exists(path + ".partial"))
+        {
+            File.Delete(path + ".partial");
+        }
     }
 }

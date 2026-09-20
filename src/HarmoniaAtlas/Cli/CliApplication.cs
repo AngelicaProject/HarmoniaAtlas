@@ -93,9 +93,7 @@ public static class CliApplication
             output.WriteLine($"Languages: {string.Join(", ", summary.Languages)}");
             output.WriteLine($"Compatible sheet count: {summary.CompatibleSheetCount}");
             output.WriteLine($"Incompatible sheet count: {summary.IncompatibleSheetCount}");
-            output.WriteLine($"Translatable column count: {summary.TranslatableColumnCount}");
-            output.WriteLine($"Context column count: {summary.ContextColumnCount}");
-            output.WriteLine($"Unknown column count: {summary.UnknownColumnCount}");
+            output.WriteLine($"Translatable occurrence count: {summary.TranslatableOccurrenceCount}");
             output.WriteLine($"BundleId: {summary.BundleId}");
             output.WriteLine($"Output path: {summary.OutputPath}");
         }

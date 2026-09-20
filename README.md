@@ -107,7 +107,7 @@ dotnet run --project src/HarmoniaAtlas -- guidance \
   --output ffxiv-2026.09.01.0000.0000.hsg.json
 ```
 
-Guidance compares exact `macro_text` values at exact sheet/row/subrow/column coordinates. Only a column with positive official-language variance is `translatable`; `context`, `technical`, `unknown`, missing guidance, and incompatible guidance are read-only from a translation-safety perspective. A String cell is never writable merely because it is a String. Guidance is derived metadata: it does not change HXS identity, create translation identity, or become part of an `.hxs` file. It is generated fully offline and does not require EXDSchema or network access.
+An exact String occurrence is writable only when compatible official-language snapshots contain different exact `macro_text` for that sheet/row/subrow/column coordinate. An occurrence absent from the allowlist is read-only.
 
 The sidecar format and its fail-closed rules are specified in [`docs/SOURCE_GUIDANCE_FORMAT.md`](docs/SOURCE_GUIDANCE_FORMAT.md).
 

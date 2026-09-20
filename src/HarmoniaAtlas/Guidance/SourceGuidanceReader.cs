@@ -33,21 +33,16 @@ public static class SourceGuidanceReader
     public static void Validate(SourceGuidanceBundle bundle)
     {
         ArgumentNullException.ThrowIfNull(bundle);
-        if (bundle.FormatVersion != 1 || string.IsNullOrWhiteSpace(bundle.GameVersion) || string.IsNullOrWhiteSpace(bundle.Scope) ||
-            bundle.Inputs is null || bundle.Eligibility is null || bundle.Eligibility.Sheets is null ||
-            bundle.Semantics.HasValue || !SourceGuidanceHashing.IsSha256(bundle.BundleId))
+        if (bundle.FormatVersion != 1 || string.IsNullOrWhiteSpace(bundle.GameVersion) ||
+            string.IsNullOrWhiteSpace(bundle.Scope) || bundle.Inputs is null || bundle.Sheets is null ||
+            !SourceGuidanceHashing.IsSha256(bundle.BundleId))
         {
             throw new SourceGuidanceFormatException("Source guidance metadata is invalid.");
         }
 
         ValidateInputs(bundle.Inputs);
-        if (bundle.Eligibility.Version != 1)
-        {
-            throw new SourceGuidanceFormatException("Unsupported source guidance eligibility version.");
-        }
-
         string? previousSheet = null;
-        foreach (SourceGuidanceSheet sheet in bundle.Eligibility.Sheets)
+        foreach (SourceGuidanceSheet sheet in bundle.Sheets)
         {
             if (sheet is null || string.IsNullOrWhiteSpace(sheet.Name) || !SourceGuidanceHashing.IsSha256(sheet.SchemaHash) ||
                 (previousSheet is not null && string.CompareOrdinal(previousSheet, sheet.Name) >= 0))
@@ -56,8 +51,7 @@ public static class SourceGuidanceReader
             }
 
             previousSheet = sheet.Name;
-            ValidateReasons(sheet);
-            ValidateColumns(sheet, bundle.Inputs.Select(input => input.Language).ToArray());
+            ValidateSheet(sheet);
         }
 
         string expectedBundleId;
@@ -87,8 +81,9 @@ public static class SourceGuidanceReader
         HashSet<string> languages = new(StringComparer.Ordinal);
         foreach (SourceGuidanceInput input in inputs)
         {
-            if (input is null || string.IsNullOrWhiteSpace(input.Language) || !SourceGuidanceHashing.IsSha256(input.ContentId) ||
-                !SourceGuidanceHashing.IsSha256(input.SnapshotId) || !languages.Add(input.Language) ||
+            if (input is null || string.IsNullOrWhiteSpace(input.Language) ||
+                !SourceGuidanceHashing.IsSha256(input.ContentId) || !SourceGuidanceHashing.IsSha256(input.SnapshotId) ||
+                !languages.Add(input.Language) ||
                 (previousLanguage is not null && string.CompareOrdinal(previousLanguage, input.Language) >= 0))
             {
                 throw new SourceGuidanceFormatException("Source guidance inputs are invalid or not in ordinal language order.");
@@ -98,98 +93,60 @@ public static class SourceGuidanceReader
         }
     }
 
-    private static void ValidateReasons(SourceGuidanceSheet sheet)
+    private static void ValidateSheet(SourceGuidanceSheet sheet)
     {
-        if (!Enum.IsDefined(sheet.Status) ||
-            sheet.IncompatibilityReasons is null ||
+        if (!Enum.IsDefined(sheet.Status) || sheet.Translatable is null || sheet.IncompatibilityReasons is null ||
             sheet.Status == SourceGuidanceSheetStatus.Compatible && sheet.IncompatibilityReasons.Count != 0 ||
-            sheet.Status == SourceGuidanceSheetStatus.Incompatible && sheet.IncompatibilityReasons.Count == 0 ||
+            sheet.Status == SourceGuidanceSheetStatus.Incompatible &&
+            (sheet.IncompatibilityReasons.Count == 0 || sheet.Translatable.Count != 0) ||
             sheet.IncompatibilityReasons.Distinct().Count() != sheet.IncompatibilityReasons.Count)
         {
-            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' has invalid compatibility reasons.");
+            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' is invalid.");
         }
 
+        int previousReason = -1;
         foreach (SourceGuidanceIncompatibilityReason reason in sheet.IncompatibilityReasons)
         {
-            if (!Enum.IsDefined(reason))
+            if (!Enum.IsDefined(reason) || (int)reason <= previousReason)
             {
-                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' has an unsupported compatibility reason.");
+                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' has invalid incompatibility reasons.");
             }
+
+            previousReason = (int)reason;
+        }
+
+        uint previousRowId = 0;
+        ushort previousSubrowId = 0;
+        int previousColumnIndex = -1;
+        bool hasPreviousOccurrence = false;
+        foreach (SourceGuidanceOccurrence occurrence in sheet.Translatable)
+        {
+            if (occurrence is null || occurrence.ColumnIndex < 0 ||
+                (hasPreviousOccurrence && CompareOccurrences(previousRowId, previousSubrowId, previousColumnIndex, occurrence) >= 0))
+            {
+                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' has invalid translatable coordinates.");
+            }
+
+            previousRowId = occurrence.RowId;
+            previousSubrowId = occurrence.SubrowId;
+            previousColumnIndex = occurrence.ColumnIndex;
+            hasPreviousOccurrence = true;
         }
     }
 
-    private static void ValidateColumns(SourceGuidanceSheet sheet, IReadOnlyList<string> inputLanguages)
+    private static int CompareOccurrences(
+        uint rowId,
+        ushort subrowId,
+        int columnIndex,
+        SourceGuidanceOccurrence candidate)
     {
-        if (sheet.Columns is null)
+        int rowComparison = rowId.CompareTo(candidate.RowId);
+        if (rowComparison != 0)
         {
-            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' has missing columns.");
+            return rowComparison;
         }
 
-        int previousIndex = -1;
-        foreach (SourceGuidanceColumn column in sheet.Columns)
-        {
-            if (column is null || column.ColumnIndex < 0 || column.ColumnIndex <= previousIndex || !Enum.IsDefined(column.Role))
-            {
-                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheet.Name}' has invalid columns.");
-            }
-
-            previousIndex = column.ColumnIndex;
-            if (sheet.Status == SourceGuidanceSheetStatus.Incompatible && column.Role == SourceGuidanceRole.Translatable)
-            {
-                throw new SourceGuidanceFormatException($"Incompatible source-guidance sheet '{sheet.Name}' cannot contain a translatable column.");
-            }
-
-            ValidateEvidence(sheet.Name, column, inputLanguages);
-        }
-    }
-
-    private static void ValidateEvidence(string sheetName, SourceGuidanceColumn column, IReadOnlyList<string> inputLanguages)
-    {
-        if (column.Evidence is null)
-        {
-            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has missing evidence.");
-        }
-
-        SourceGuidanceEvidence evidence = column.Evidence;
-        if (!Enum.IsDefined(evidence.Kind) || evidence.ComparableOccurrences < 0 || evidence.VaryingOccurrences < 0 ||
-            evidence.VaryingOccurrences > evidence.ComparableOccurrences ||
-            evidence.Languages is null || evidence.Languages.Count == 0 || evidence.Languages.Distinct(StringComparer.Ordinal).Count() != evidence.Languages.Count ||
-            !evidence.Languages.SequenceEqual(evidence.Languages.OrderBy(language => language, StringComparer.Ordinal), StringComparer.Ordinal) ||
-            !evidence.Languages.SequenceEqual(inputLanguages, StringComparer.Ordinal))
-        {
-            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has invalid evidence.");
-        }
-
-        if (evidence.Kind == SourceGuidanceEvidenceKind.KnownTechnicalNamespace)
-        {
-            if (column.Role != SourceGuidanceRole.Context || !string.Equals(evidence.Prefix, "TEXT_", StringComparison.Ordinal) || evidence.ComparableOccurrences != 0 || evidence.VaryingOccurrences != 0)
-            {
-                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has invalid namespace evidence.");
-            }
-        }
-        else if (evidence.Kind == SourceGuidanceEvidenceKind.OfficialLanguageVariance)
-        {
-            if (column.Role != SourceGuidanceRole.Translatable || evidence.VaryingOccurrences == 0)
-            {
-                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has invalid variance evidence.");
-            }
-        }
-        else if (evidence.Kind == SourceGuidanceEvidenceKind.NoOfficialLanguageVariance)
-        {
-            if (column.Role != SourceGuidanceRole.Unknown || evidence.VaryingOccurrences != 0)
-            {
-                throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has invalid invariant evidence.");
-            }
-        }
-        else if (evidence.Kind == SourceGuidanceEvidenceKind.IncompatibleSourceLayout &&
-                 (column.Role != SourceGuidanceRole.Unknown || evidence.ComparableOccurrences != 0 || evidence.VaryingOccurrences != 0))
-        {
-            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has invalid incompatible-layout evidence.");
-        }
-
-        if (evidence.Kind != SourceGuidanceEvidenceKind.KnownTechnicalNamespace && evidence.Prefix is not null)
-        {
-            throw new SourceGuidanceFormatException($"Source guidance sheet '{sheetName}' has an unexpected evidence prefix.");
-        }
+        int subrowComparison = subrowId.CompareTo(candidate.SubrowId);
+        return subrowComparison != 0 ? subrowComparison : columnIndex.CompareTo(candidate.ColumnIndex);
     }
 }

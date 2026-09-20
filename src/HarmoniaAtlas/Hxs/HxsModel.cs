@@ -35,10 +35,16 @@ public sealed record HxsRowRecord(
     byte[] StringHash,
     IReadOnlyList<HxsStringCellRecord> StringCells);
 
+public sealed record HxsStringOccurrenceValue(
+    uint RowId,
+    ushort SubrowId,
+    int ColumnIndex,
+    string MacroText);
+
 public sealed record HxsStringRowRecord(
     uint RowId,
     ushort SubrowId,
-    IReadOnlyList<HxsStringCellRecord> StringCells);
+    IReadOnlyList<HxsStringOccurrenceValue> Values);
 
 public sealed record HxsSheetRecord(
     string Name,

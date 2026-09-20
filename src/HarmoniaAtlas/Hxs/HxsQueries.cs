@@ -96,8 +96,7 @@ internal static class HxsQueries
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText =
             """
-            SELECT r.row_id, r.subrow_id,
-                   sc.column_index, sc.macro_text, sc.raw_value, sc.macro_hash, sc.raw_hash
+            SELECT r.row_id, r.subrow_id, sc.column_index, sc.macro_text
             FROM "rows" AS r
             LEFT JOIN string_cells AS sc
               ON sc.sheet_id = r.sheet_id AND sc.row_id = r.row_id AND sc.subrow_id = r.subrow_id
@@ -120,18 +119,15 @@ internal static class HxsQueries
                     yield return current;
                 }
 
-                current = new HxsStringRowRecord(rowId, subrowId, new List<HxsStringCellRecord>());
+                current = new HxsStringRowRecord(rowId, subrowId, new List<HxsStringOccurrenceValue>());
             }
 
             if (!reader.IsDBNull(2))
             {
                 int columnIndex = reader.GetInt32(2);
                 string macroText = reader.GetString(3);
-                byte[]? rawValue = reader.IsDBNull(4) ? null : (byte[])reader.GetValue(4);
-                byte[] macroHash = ReadHash(reader, 5, "macro_hash");
-                byte[]? rawHash = reader.IsDBNull(6) ? null : ReadHash(reader, 6, "raw_hash");
-                ((List<HxsStringCellRecord>)current.StringCells).Add(
-                    new HxsStringCellRecord(rowId, subrowId, columnIndex, macroText, rawValue, macroHash, rawHash));
+                ((List<HxsStringOccurrenceValue>)current.Values).Add(
+                    new HxsStringOccurrenceValue(rowId, subrowId, columnIndex, macroText));
             }
         }
 

@@ -16,16 +16,13 @@ public sealed class SourceGuidanceGenerator
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
-        IReadOnlyList<SourceGuidanceColumn> columns = bundle.Eligibility.Sheets.SelectMany(sheet => sheet.Columns).ToArray();
         return new SourceGuidanceSummary(
             bundle.GameVersion,
             bundle.Scope,
             bundle.Inputs.Select(input => input.Language).ToArray(),
-            bundle.Eligibility.Sheets.Count(sheet => sheet.Status == SourceGuidanceSheetStatus.Compatible),
-            bundle.Eligibility.Sheets.Count(sheet => sheet.Status == SourceGuidanceSheetStatus.Incompatible),
-            columns.Count(column => column.Role == SourceGuidanceRole.Translatable),
-            columns.Count(column => column.Role == SourceGuidanceRole.Context),
-            columns.Count(column => column.Role == SourceGuidanceRole.Unknown),
+            bundle.Sheets.Count(sheet => sheet.Status == SourceGuidanceSheetStatus.Compatible),
+            bundle.Sheets.Count(sheet => sheet.Status == SourceGuidanceSheetStatus.Incompatible),
+            checked(bundle.Sheets.Sum(sheet => sheet.Translatable.Count)),
             bundle.BundleId,
             Path.GetFullPath(outputPath));
     }
