@@ -24,136 +24,125 @@ public sealed class SourceGuidanceAnalyzer
             throw new SourceGuidanceException("Source guidance source and comparison paths must be distinct.");
         }
 
-        List<VerifiedInput> verifiedInputs = normalizedPaths.Select(VerifyInput).ToList();
-        VerifiedInput sourceInput = verifiedInputs[0];
-        if (verifiedInputs.Select(input => input.Metadata.Language).Distinct(StringComparer.Ordinal).Count() != verifiedInputs.Count)
-        {
-            throw new SourceGuidanceException("Source guidance HXS languages must be distinct.");
-        }
-
-        foreach (VerifiedInput input in verifiedInputs.Skip(1))
-        {
-            if (!string.Equals(sourceInput.Metadata.GameVersion, input.Metadata.GameVersion, StringComparison.Ordinal))
-            {
-                throw new SourceGuidanceException(
-                    $"Source guidance HXS inputs must use the same game_version; '{sourceInput.Metadata.GameVersion}' and '{input.Metadata.GameVersion}' differ.");
-            }
-
-            if (!string.Equals(sourceInput.Metadata.Scope, input.Metadata.Scope, StringComparison.Ordinal))
-            {
-                throw new SourceGuidanceException(
-                    $"Source guidance HXS inputs must use the same scope; '{sourceInput.Metadata.Scope}' and '{input.Metadata.Scope}' differ.");
-            }
-        }
-
-        List<VerifiedInput> orderedInputs = verifiedInputs
-            .OrderBy(input => input.Metadata.Language, StringComparer.Ordinal)
-            .ToList();
-
-        List<OpenInput> openInputs = new();
+        List<HxsGuidanceEvidenceSource> inputs = new();
         try
         {
-            foreach (VerifiedInput input in orderedInputs)
+            foreach (string normalizedPath in normalizedPaths)
             {
-                HxsReader reader = HxsReader.OpenReadOnly(input.Path);
-                try
-                {
-                    IReadOnlyList<HxsSheetRecord> sheets = reader.ReadSheets();
-                    IReadOnlyDictionary<string, HxsSheetRecord> sheetsByName = sheets.ToDictionary(sheet => sheet.Name, StringComparer.Ordinal);
-                    string evidenceId = ComputeEvidenceId(input, reader, sheets);
-                    openInputs.Add(new OpenInput(input, reader, sheetsByName, evidenceId));
-                }
-                catch
-                {
-                    reader.Dispose();
-                    throw;
-                }
+                inputs.Add(HxsGuidanceEvidenceSource.OpenVerified(normalizedPath));
             }
 
-            OpenInput sourceOpenInput = openInputs.Single(input =>
-                pathComparer.Equals(input.Verified.Path, sourceInput.Path));
-            SourceGuidanceSheet[] guidanceSheets = openInputs
-                .SelectMany(input => input.Sheets.Keys)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(name => name, StringComparer.Ordinal)
-                .Select(sheetName => AnalyzeSheet(sheetName, sourceOpenInput, openInputs))
-                .ToArray();
-
-            SourceGuidanceSourceIdentity sourceIdentity = new(
-                sourceInput.Metadata.Language,
-                sourceInput.Metadata.ContentId,
-                sourceInput.Metadata.SnapshotId);
-            SourceGuidanceEvidenceInput[] evidenceInputs = orderedInputs
-                .Select(input =>
-                {
-                    OpenInput openInput = openInputs.Single(candidate =>
-                        pathComparer.Equals(candidate.Verified.Path, input.Path));
-                    return new SourceGuidanceEvidenceInput(input.Metadata.Language, openInput.EvidenceId);
-                })
-                .ToArray();
-            SourceGuidanceBundle withoutBundleId = new(
-                1,
-                sourceInput.Metadata.GameVersion,
-                sourceInput.Metadata.Scope,
-                string.Empty,
-                sourceIdentity,
-                evidenceInputs,
-                guidanceSheets);
-            return withoutBundleId with { BundleId = SourceGuidanceHashing.ComputeBundleId(withoutBundleId) };
+            return Analyze(inputs[0], inputs.Skip(1).Cast<IGuidanceEvidenceSource>().ToArray());
         }
         finally
         {
-            foreach (OpenInput input in openInputs.AsEnumerable().Reverse())
+            foreach (HxsGuidanceEvidenceSource input in inputs.AsEnumerable().Reverse())
             {
-                input.Reader.Dispose();
+                input.Dispose();
             }
         }
     }
 
-    private static VerifiedInput VerifyInput(string path)
+    public SourceGuidanceBundle Analyze(
+        IGuidanceEvidenceSource source,
+        IReadOnlyList<IGuidanceEvidenceSource> compareInputs,
+        Action<GuidanceScanProgress>? progress = null)
     {
-        try
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(compareInputs);
+        if (compareInputs.Count == 0)
         {
-            HxsVerificationResult verification = HxsVerifier.Verify(path);
-            if (!SourceGuidanceLanguages.IsCanonicalSourceLanguage(verification.Metadata.Language))
+            throw new SourceGuidanceException("Source guidance requires at least one comparison input.");
+        }
+
+        List<IGuidanceEvidenceSource> inputs = new[] { source }.Concat(compareInputs).ToList();
+        ValidateInputs(inputs);
+        List<OpenInput> openInputs = inputs
+            .OrderBy(input => input.Language, StringComparer.Ordinal)
+            .Select(input => new OpenInput(input, input.Sheets, ComputeEvidenceId(input, progress)))
+            .ToList();
+        OpenInput sourceOpenInput = openInputs.Single(input => ReferenceEquals(input.Source, source));
+
+        SourceGuidanceSheet[] guidanceSheets = openInputs
+            .SelectMany(input => input.Sheets.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .Select(sheetName => AnalyzeSheet(sheetName, sourceOpenInput, openInputs))
+            .ToArray();
+
+        if (source.ContentId is null || source.SnapshotId is null)
+        {
+            throw new SourceGuidanceException("The guidance source must expose a verified HXS contentId and snapshotId.");
+        }
+
+        SourceGuidanceBundle withoutBundleId = new(
+            1,
+            source.GameVersion,
+            source.Scope,
+            string.Empty,
+            new SourceGuidanceSourceIdentity(source.Language, source.ContentId, source.SnapshotId),
+            openInputs.Select(input => new SourceGuidanceEvidenceInput(input.Source.Language, input.EvidenceId)).ToArray(),
+            guidanceSheets);
+        return withoutBundleId with { BundleId = SourceGuidanceHashing.ComputeBundleId(withoutBundleId) };
+    }
+
+    private static void ValidateInputs(IReadOnlyList<IGuidanceEvidenceSource> inputs)
+    {
+        if (inputs.Select(input => input.Language).Distinct(StringComparer.Ordinal).Count() != inputs.Count)
+        {
+            throw new SourceGuidanceException("Source guidance inputs must use distinct languages.");
+        }
+
+        IGuidanceEvidenceSource source = inputs[0];
+        if (!SourceGuidanceLanguages.IsCanonicalSourceLanguage(source.Language))
+        {
+            throw new SourceGuidanceException($"Source guidance source uses unsupported language '{source.Language}'.");
+        }
+
+        foreach (IGuidanceEvidenceSource input in inputs)
+        {
+            if (!SourceGuidanceLanguages.IsCanonicalSourceLanguage(input.Language))
             {
-                throw new SourceGuidanceException(
-                    $"Source guidance input '{path}' uses unsupported hxs_meta.language '{verification.Metadata.Language}'. " +
-                    "Expected one of: en, ja, de, fr, zh-cn, zh-tw, ko.");
+                throw new SourceGuidanceException($"Source guidance input uses unsupported language '{input.Language}'.");
             }
 
-            return new VerifiedInput(path, verification.Metadata);
-        }
-        catch (SourceGuidanceException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            throw new SourceGuidanceException($"HXS input '{path}' failed full verification: {exception.Message}", exception);
+            if (!string.Equals(source.GameVersion, input.GameVersion, StringComparison.Ordinal) ||
+                !string.Equals(source.Scope, input.Scope, StringComparison.Ordinal))
+            {
+                throw new SourceGuidanceException("Source guidance inputs must use the same game version and scope.");
+            }
         }
     }
 
-    private static string ComputeEvidenceId(
-        VerifiedInput input,
-        HxsReader reader,
-        IReadOnlyList<HxsSheetRecord> sheets)
+    private static string ComputeEvidenceId(IGuidanceEvidenceSource input, Action<GuidanceScanProgress>? progress)
     {
-        using SourceGuidanceEvidenceHasher hasher = new(
-            input.Metadata.GameVersion,
-            input.Metadata.Scope,
-            input.Metadata.Language);
-        foreach (HxsSheetRecord sheet in sheets.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
+        using SourceGuidanceEvidenceHasher hasher = new(input.GameVersion, input.Scope, input.Language);
+        string[] sheetNames = input.Sheets.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        for (int sheetIndex = 0; sheetIndex < sheetNames.Length; sheetIndex++)
         {
+            string sheetName = sheetNames[sheetIndex];
+            GuidanceSheetMetadata sheet = input.Sheets[sheetName];
             hasher.AddSheet(sheet.Name, sheet.Variant, sheet.SchemaHash);
-            foreach (HxsStringRowRecord row in reader.ReadStringRows(sheet.Name))
+            long rowsProcessed = 0;
+            long lastProgressTimestamp = Environment.TickCount64;
+            foreach (GuidanceStringRow row in input.ReadStringRows(sheetName))
             {
                 hasher.AddRow(row.RowId, row.SubrowId);
-                foreach (HxsStringOccurrenceValue value in row.Values)
+                foreach (GuidanceStringValue value in row.Values.OrderBy(value => value.ColumnIndex))
                 {
                     hasher.AddStringOccurrence(value.ColumnIndex, value.MacroText);
                 }
+
+                rowsProcessed++;
+                if (progress is not null &&
+                    (rowsProcessed % 1000 == 0 || Environment.TickCount64 - lastProgressTimestamp >= 250))
+                {
+                    progress(new GuidanceScanProgress(input.Language, sheetName, sheetIndex + 1, sheetNames.Length, rowsProcessed));
+                    lastProgressTimestamp = Environment.TickCount64;
+                }
             }
+
+            progress?.Invoke(new GuidanceScanProgress(input.Language, sheetName, sheetIndex + 1, sheetNames.Length, rowsProcessed));
         }
 
         return hasher.ComputeEvidenceId();
@@ -166,7 +155,7 @@ public sealed class SourceGuidanceAnalyzer
     {
         List<OpenInput> presentInputs = inputs.Where(input => input.Sheets.ContainsKey(sheetName)).ToList();
         OpenInput representativeInput = sourceInput.Sheets.ContainsKey(sheetName) ? sourceInput : presentInputs[0];
-        HxsSheetRecord representative = representativeInput.Sheets[sheetName];
+        GuidanceSheetMetadata representative = representativeInput.Sheets[sheetName];
         List<SourceGuidanceIncompatibilityReason> reasons = new();
         if (presentInputs.Count != inputs.Count)
         {
@@ -180,7 +169,7 @@ public sealed class SourceGuidanceAnalyzer
                 continue;
             }
 
-            HxsSheetRecord sheet = input.Sheets[sheetName];
+            GuidanceSheetMetadata sheet = input.Sheets[sheetName];
             if (sheet.Variant != representative.Variant)
             {
                 reasons.Add(SourceGuidanceIncompatibilityReason.SheetVariantMismatch);
@@ -222,12 +211,7 @@ public sealed class SourceGuidanceAnalyzer
         string sheetName,
         string schemaHash,
         IReadOnlyList<SourceGuidanceIncompatibilityReason> reasons) =>
-        new(
-            sheetName,
-            schemaHash,
-            SourceGuidanceSheetStatus.Incompatible,
-            Array.Empty<SourceGuidanceOccurrence>(),
-            reasons);
+        new(sheetName, schemaHash, SourceGuidanceSheetStatus.Incompatible, Array.Empty<SourceGuidanceOccurrence>(), reasons);
 
     private static bool TryAnalyzeRows(
         string sheetName,
@@ -236,19 +220,19 @@ public sealed class SourceGuidanceAnalyzer
         out List<SourceGuidanceOccurrence> translatable)
     {
         translatable = new();
-        List<int> stringColumnIndexes = columns
+        int[] stringColumnIndexes = columns
             .Where(column => column.Type == HarmoniaColumnType.String)
             .Select(column => column.Index)
             .OrderBy(index => index)
-            .ToList();
-        List<IEnumerator<HxsStringRowRecord>> enumerators = inputs
-            .Select(input => input.Reader.ReadStringRows(sheetName).GetEnumerator())
+            .ToArray();
+        List<IEnumerator<GuidanceStringRow>> enumerators = inputs
+            .Select(input => input.Source.ReadStringRows(sheetName).GetEnumerator())
             .ToList();
         try
         {
             while (true)
             {
-                HxsStringRowRecord?[] currentRows = new HxsStringRowRecord?[enumerators.Count];
+                GuidanceStringRow?[] currentRows = new GuidanceStringRow?[enumerators.Count];
                 bool anyMoved = false;
                 bool allMoved = true;
                 for (int index = 0; index < enumerators.Count; index++)
@@ -279,12 +263,12 @@ public sealed class SourceGuidanceAnalyzer
                     string[] macroTexts = new string[currentRows.Length];
                     for (int inputIndex = 0; inputIndex < currentRows.Length; inputIndex++)
                     {
-                        HxsStringRowRecord row = currentRows[inputIndex]!;
+                        GuidanceStringRow row = currentRows[inputIndex]!;
                         int cellIndex = cellIndexes[inputIndex];
                         if (cellIndex >= row.Values.Count || row.Values[cellIndex].ColumnIndex != columnIndex)
                         {
                             throw new SourceGuidanceException(
-                                $"Verified HXS sheet '{sheetName}' does not have canonical String-cell coverage at column {columnIndex}.");
+                                $"Guidance sheet '{sheetName}' does not have canonical String-cell coverage at column {columnIndex}.");
                         }
 
                         macroTexts[inputIndex] = row.Values[cellIndex].MacroText;
@@ -293,41 +277,33 @@ public sealed class SourceGuidanceAnalyzer
 
                     if (macroTexts.Skip(1).Any(value => !string.Equals(macroTexts[0], value, StringComparison.Ordinal)))
                     {
-                        translatable.Add(new SourceGuidanceOccurrence(
-                            currentRows[0]!.RowId,
-                            currentRows[0]!.SubrowId,
-                            columnIndex));
+                        translatable.Add(new SourceGuidanceOccurrence(currentRows[0]!.RowId, currentRows[0]!.SubrowId, columnIndex));
                     }
                 }
 
                 if (Enumerable.Range(0, currentRows.Length).Any(index => cellIndexes[index] != currentRows[index]!.Values.Count))
                 {
-                    throw new SourceGuidanceException($"Verified HXS sheet '{sheetName}' contains an unexpected String cell.");
+                    throw new SourceGuidanceException($"Guidance sheet '{sheetName}' contains an unexpected String value.");
                 }
             }
         }
         finally
         {
-            foreach (IEnumerator<HxsStringRowRecord> enumerator in enumerators)
+            foreach (IEnumerator<GuidanceStringRow> enumerator in enumerators)
             {
                 enumerator.Dispose();
             }
         }
     }
 
-    private static bool ColumnsEqual(IReadOnlyList<HarmoniaColumnDefinition> first, IReadOnlyList<HarmoniaColumnDefinition> second)
-    {
-        return first.Count == second.Count && first.Zip(second).All(pair =>
+    private static bool ColumnsEqual(IReadOnlyList<HarmoniaColumnDefinition> first, IReadOnlyList<HarmoniaColumnDefinition> second) =>
+        first.Count == second.Count && first.Zip(second).All(pair =>
             pair.First.Index == pair.Second.Index &&
             pair.First.Offset == pair.Second.Offset &&
             pair.First.Type == pair.Second.Type);
-    }
-
-    private sealed record VerifiedInput(string Path, HxsMetadata Metadata);
 
     private sealed record OpenInput(
-        VerifiedInput Verified,
-        HxsReader Reader,
-        IReadOnlyDictionary<string, HxsSheetRecord> Sheets,
+        IGuidanceEvidenceSource Source,
+        IReadOnlyDictionary<string, GuidanceSheetMetadata> Sheets,
         string EvidenceId);
 }

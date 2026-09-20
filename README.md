@@ -63,6 +63,18 @@ Runtime coordinates and cross-version translation identity are deliberately sepa
 
 Run from source with the .NET SDK:
 
+Prepare one validated source package for Aeria:
+
+```bash
+dotnet run --project src/HarmoniaAtlas -- package \
+  --game-path <ffxiv-installation-root> \
+  --language en \
+  --output source-en.hsp \
+  --events jsonl
+```
+
+The package command produces one `.hsp` containing the selected source HXS and multilingual source guidance. See [`docs/SOURCE_PACKAGE_FORMAT.md`](docs/SOURCE_PACKAGE_FORMAT.md) for the format and validation contract.
+
 ```bash
 dotnet run --project src/HarmoniaAtlas -- extract \
   --game-path <ffxiv-installation-root> \

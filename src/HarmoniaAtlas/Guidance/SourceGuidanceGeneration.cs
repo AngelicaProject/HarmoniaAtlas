@@ -13,6 +13,21 @@ public sealed class SourceGuidanceGenerator
         return Summarize(bundle, Path.GetFullPath(outputPath));
     }
 
+    public SourceGuidanceSummary Generate(
+        IGuidanceEvidenceSource source,
+        IReadOnlyList<IGuidanceEvidenceSource> compareInputs,
+        string outputPath,
+        Action<GuidanceScanProgress>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(compareInputs);
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
+
+        SourceGuidanceBundle bundle = new SourceGuidanceAnalyzer().Analyze(source, compareInputs, progress);
+        SourceGuidanceWriter.Write(bundle, outputPath);
+        return Summarize(bundle, Path.GetFullPath(outputPath));
+    }
+
     public static SourceGuidanceSummary Summarize(SourceGuidanceBundle bundle, string outputPath)
     {
         ArgumentNullException.ThrowIfNull(bundle);
