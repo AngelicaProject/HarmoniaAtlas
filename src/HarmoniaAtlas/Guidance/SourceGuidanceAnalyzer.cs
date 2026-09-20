@@ -97,7 +97,18 @@ public sealed class SourceGuidanceAnalyzer
         try
         {
             HxsVerificationResult verification = HxsVerifier.Verify(path);
+            if (!SourceGuidanceLanguages.IsCanonicalSourceLanguage(verification.Metadata.Language))
+            {
+                throw new SourceGuidanceException(
+                    $"Source guidance input '{path}' uses unsupported hxs_meta.language '{verification.Metadata.Language}'. " +
+                    "Expected one of: en, ja, de, fr, zh-cn, zh-tw, ko.");
+            }
+
             return new VerifiedInput(path, verification.Metadata);
+        }
+        catch (SourceGuidanceException)
+        {
+            throw;
         }
         catch (Exception exception)
         {

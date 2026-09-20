@@ -66,6 +66,25 @@ public sealed class SourceGuidanceTests
         }
     }
 
+    [Theory]
+    [InlineData("pirate")]
+    [InlineData("english")]
+    [InlineData("zh_CN")]
+    public void GuidanceRejectsNonCanonicalSourceLanguage(string language)
+    {
+        string invalidLanguage = CreateSnapshot(language, Sheet("Item", ["Fire Shard"]));
+        string valid = CreateSnapshot("en", Sheet("Item", ["ファイアシャード"]));
+        try
+        {
+            Assert.Throws<SourceGuidanceException>(() => Analyze([invalidLanguage, valid]));
+        }
+        finally
+        {
+            Delete(invalidLanguage);
+            Delete(valid);
+        }
+    }
+
     [Fact]
     public void ExactVarianceAddsOnlyThatOccurrenceToTheAllowlist()
     {
@@ -282,14 +301,24 @@ public sealed class SourceGuidanceTests
             new SourceGuidanceGenerator().Generate([en, ja, de, fr], firstOutput);
             new SourceGuidanceGenerator().Generate([fr, de, en, ja], secondOutput);
 
-            Assert.Equal(File.ReadAllBytes(firstOutput), File.ReadAllBytes(secondOutput));
+            byte[] firstBytes = File.ReadAllBytes(firstOutput);
+            byte[] secondBytes = File.ReadAllBytes(secondOutput);
+            Assert.Equal(firstBytes, secondBytes);
+            Assert.False(firstBytes.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }));
+            Assert.Equal((byte)'\n', firstBytes[^1]);
+
+            string firstJson = File.ReadAllText(firstOutput);
+            Assert.DoesNotContain("\r", firstJson);
+            Assert.Equal(1, firstJson.Count(character => character == '\n'));
+            Assert.DoesNotContain("\n", firstJson[..^1]);
+
             SourceGuidanceBundle bundle = SourceGuidanceReader.Read(firstOutput);
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(firstOutput));
             Assert.True(document.RootElement.TryGetProperty("sheets", out _));
             Assert.False(document.RootElement.TryGetProperty("semantics", out _));
             Assert.Equal(bundle.BundleId, SourceGuidanceReader.Read(secondOutput).BundleId);
 
-            string tampered = File.ReadAllText(firstOutput).Replace("\"columnIndex\": 0", "\"columnIndex\": 1", StringComparison.Ordinal);
+            string tampered = File.ReadAllText(firstOutput).Replace("\"columnIndex\":0", "\"columnIndex\":1", StringComparison.Ordinal);
             File.WriteAllText(firstOutput, tampered);
             Assert.Throws<SourceGuidanceFormatException>(() => SourceGuidanceReader.Read(firstOutput));
         }

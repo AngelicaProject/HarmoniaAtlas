@@ -62,7 +62,13 @@ Each sheet records the representative physical `schemaHash`, a `compatible` or `
 
 Before comparison, Atlas fully verifies every HXS input. Verification includes the supported HXS format and SQLite contract, integrity and foreign-key checks, canonical payloads, String-cell coverage, schema/row/sheet hashes, counts, `contentId`, and `snapshotId`.
 
-At least two inputs are required. Their `hxs_meta.language` values must be distinct. All inputs must have the same exact `game_version` and `scope`. Input filenames do not provide language. Language-specific `contentId` and `snapshotId` values do not need to match.
+At least two inputs are required. Their `hxs_meta.language` values must be distinct and must use one of these canonical source-language codes:
+
+```text
+en  ja  de  fr  zh-cn  zh-tw  ko
+```
+
+The match is exact and case-sensitive. Names such as `english`, `japanese`, and `zh_CN` are not accepted. Input filenames do not provide language. Language-specific `contentId` and `snapshotId` values do not need to match. All inputs must have the same exact `game_version` and `scope`.
 
 ## Sheet compatibility
 
@@ -109,6 +115,19 @@ row 2: Hello / こんにちは
 
 only row 2 is allowlisted. A localized occurrence in one row never grants permission to another row in the same column.
 
+## Applying guidance to a snapshot
+
+An HSG bundle may grant translation permission for an HXS only when all of these checks pass:
+
+1. `HSG.gameVersion` equals `HXS.game_version`.
+2. `HSG.scope` equals `HXS.scope`.
+3. `HSG.inputs` contains an entry whose `language`, `contentId`, and `snapshotId` exactly equal the HXS metadata.
+4. For every sheet whose allowlist is consumed, the HSG `schemaHash` equals the HXS `schema_hash`.
+
+If any required check fails, the guidance grants no translation permission. This is fail-closed.
+
+Do not match by game version alone, language alone, a similar `contentId`, another snapshot from the same patch, or a same-named sheet with a different schema. HSG does not use text similarity or repair mismatches.
+
 ## Row topology
 
 Rows are compared in ordered scans by exact `row_id` and `subrow_id`. String cells are matched by exact `column_index`. If any input has a different row/subrow topology for a sheet, the whole sheet is incompatible and its allowlist is empty. Atlas does not guess correspondences from text or row hashes.
@@ -122,7 +141,7 @@ Persisted arrays are canonicalized explicitly:
 - `incompatibilityReasons` by their contract order;
 - `translatable` by `rowId`, then `subrowId`, then `columnIndex`.
 
-JSON is UTF-8, indented, uses stable camel-case enum values, and ends with one LF newline. The artifact contains no timestamps, absolute paths, machine names, random IDs, or filesystem-order data.
+Persisted JSON is compact UTF-8 without a BOM, uses stable camel-case enum values, and ends with one LF newline. JSON whitespace is not part of the bundle identity. The artifact contains no timestamps, absolute paths, machine names, random IDs, or filesystem-order data. The formatted JSON example in this document is for readability.
 
 ## bundleId
 
@@ -146,6 +165,8 @@ The `bundleId` field is excluded from its own hash. Output paths, timestamps, ma
 `SourceGuidanceReader` validates format version, required SHA-256 strings, input and sheet ordering, enum values, typed incompatibility reasons, coordinate ordering, incompatible-sheet emptiness, and the recomputed `bundleId`.
 
 Generation writes the complete JSON to `<output>.partial`, flushes it, reads it back through the validator, and atomically publishes the final output. A failed generation does not publish a final artifact and removes the temporary file where practical.
+
+## CLI example
 
 The command is:
 

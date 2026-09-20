@@ -1,7 +1,7 @@
 # Repository guidance
 
-Keep documentation reader-facing and describe current behavior, not the implementation process.
+Keep changes focused and preserve documented format and compatibility contracts.
 
-For documentation work, read and follow [`docs/AGENTS.md`](docs/AGENTS.md) before editing files under `docs/`.
+Write technical documentation in clear, direct language for engineers who need to understand and maintain the system.
 
-Task boundaries, rejected approaches, acceptance criteria, and PR rationale belong in the PR description unless they are necessary to understand the current system.
+Before editing files under `docs/`, read [`docs/AGENTS.md`](docs/AGENTS.md).

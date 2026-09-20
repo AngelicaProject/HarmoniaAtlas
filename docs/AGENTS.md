@@ -1,9 +1,19 @@
 # Documentation guidance
 
-Documentation is reader-facing, not task-facing. A sentence belongs in canonical documentation only if it remains useful to a reader who has never seen the prompt, task, PR, or implementation history.
+Write documentation for engineers who need to understand, use, and maintain the system.
 
-Describe current behavior, not the implementation process. Format documentation should explain the persisted format, field semantics, validation, compatibility, identity/hash rules, and useful examples.
+Use plain technical language. Prefer short sentences, concrete terminology, and focused examples.
 
-Do not copy acceptance criteria, non-goals, rejected alternatives, prompt constraints, PR rationale, or proof-of-compliance statements into canonical documentation unless they are necessary to understand, use, implement, or maintain the current system. Task boundaries and rejected approaches belong in the PR description.
+Start with what the component or format is and how it is used. Then describe its data model, behavior, validation, compatibility, failure cases, and examples as appropriate.
 
-Do not reserve persisted fields, enum variants, or documentation sections for speculative future features. Add them when their contract is actually designed.
+Describe the current system. Avoid development history and rationale that no longer helps the reader.
+
+Format documentation should focus on file structure, field semantics, ordering and hashing, validation, compatibility, and examples.
+
+Do not add format fields, enum values, or sections for features that do not exist yet.
+
+Avoid duplicating the same rule across multiple documents.
+
+Be precise without being unnecessarily formal or dense. Prefer the simplest complete explanation.
+
+Keep the file concise and easy to read.
