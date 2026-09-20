@@ -1,5 +1,6 @@
 using System.Text.Json;
 using HarmoniaAtlas.Extraction;
+using HarmoniaAtlas.Guidance;
 using HarmoniaAtlas.Hxs;
 
 namespace HarmoniaAtlas.Cli;
@@ -20,6 +21,7 @@ public static class CliApplication
             CliCommand.Extract => RunExtract(options, output),
             CliCommand.Verify => RunVerify(options, output),
             CliCommand.Inspect => RunInspect(options, output),
+            CliCommand.Guidance => RunGuidance(options, output),
             _ => throw new InvalidOperationException("No executable CLI command was selected."),
         };
     }
@@ -70,6 +72,35 @@ public static class CliApplication
     {
         HxsInspection inspection = HxsInspector.Inspect(options.HxsPath!);
         output.WriteLine(options.Json ? inspection.ToJson() : inspection.ToText());
+        return 0;
+    }
+
+    private static int RunGuidance(CliOptions options, TextWriter output)
+    {
+        SourceGuidanceSummary summary = new SourceGuidanceGenerator().Generate(
+            options.SourcePath!,
+            options.ComparePaths!,
+            options.OutputPath!);
+        if (options.Json)
+        {
+            output.WriteLine(JsonSerializer.Serialize(summary, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true,
+            }));
+        }
+        else
+        {
+            output.WriteLine($"Game version: {summary.GameVersion}");
+            output.WriteLine($"Scope: {summary.Scope}");
+            output.WriteLine($"Languages: {string.Join(", ", summary.Languages)}");
+            output.WriteLine($"Compatible sheet count: {summary.CompatibleSheetCount}");
+            output.WriteLine($"Incompatible sheet count: {summary.IncompatibleSheetCount}");
+            output.WriteLine($"Translatable occurrence count: {summary.TranslatableOccurrenceCount}");
+            output.WriteLine($"BundleId: {summary.BundleId}");
+            output.WriteLine($"Output path: {summary.OutputPath}");
+        }
+
         return 0;
     }
 }

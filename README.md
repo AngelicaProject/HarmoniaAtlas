@@ -96,6 +96,21 @@ Verify a snapshot by recomputing its schema expectations, hashes, counts, `conte
 dotnet run --project src/HarmoniaAtlas -- verify source-en.hxs
 ```
 
+Generate a deterministic Harmonia Source Guidance sidecar from one verified source HXS and one or more verified comparison HXS files of the same game version:
+
+```bash
+dotnet run --project src/HarmoniaAtlas -- guidance \
+  --source source-en.hxs \
+  --compare source-ja.hxs \
+  --compare source-de.hxs \
+  --compare source-fr.hxs \
+  --output ffxiv-2026.09.01.0000.0000.hsg.json
+```
+
+An exact String occurrence is writable only when compatible official-language snapshots contain different exact `macro_text` for that sheet/row/subrow/column coordinate. An occurrence absent from the allowlist is read-only.
+
+The sidecar format and its fail-closed rules are specified in [`docs/SOURCE_GUIDANCE_FORMAT.md`](docs/SOURCE_GUIDANCE_FORMAT.md).
+
 Extraction also supports `--json` for structured command output. Diagnostics are written to stderr; command output is written to stdout.
 
 ## Building and testing
@@ -131,6 +146,7 @@ src/HarmoniaAtlas/
   Game/         game installation and Lumina boundary
   Extraction/   extraction pipeline and canonical row conversion
   Hxs/          HXS schema, hashing, reader/writer, verifier, inspector
+  Guidance/     multilingual eligibility analysis and HSG sidecar I/O
   Model/        Harmonia-owned source model
 
 tests/HarmoniaAtlas.Tests/
