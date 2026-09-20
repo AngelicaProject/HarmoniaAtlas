@@ -21,7 +21,7 @@ FINAL FANTASY XIV installation
 
 Harmonia Atlas is in early development.
 
-- Application version: `0.1.0`
+- Application version: `0.2.0`
 - HXS format version: `1`
 - Lumina: `7.7.0`
 - Runtime: .NET 10

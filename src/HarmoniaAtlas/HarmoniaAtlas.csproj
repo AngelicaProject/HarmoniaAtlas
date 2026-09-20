@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>harmonia-atlas</AssemblyName>
     <RootNamespace>HarmoniaAtlas</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <ApplicationIcon />
     <Platforms>AnyCPU</Platforms>
     <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
