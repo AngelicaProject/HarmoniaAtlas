@@ -21,7 +21,7 @@ FINAL FANTASY XIV installation
 
 Harmonia Atlas is in early development.
 
-- Application version: `0.2.0`
+- Application version: `0.3.0`
 - HXS format version: `1`
 - Lumina: `7.7.0`
 - Runtime: .NET 10
@@ -43,7 +43,7 @@ Atlas is intentionally narrow and stateless:
 - independently verifies completed snapshots;
 - exposes concise human-readable and JSON inspection output.
 
-A canonical extraction is all-or-nothing. Unsupported column types, unreadable sheets, corrupt data, or other extraction failures abort the snapshot instead of silently omitting data.
+Unreadable or unsupported sheets are recorded as exclusions while readable sheets are preserved. Extraction fails if no sheet can be read or if a failure affects the snapshot as a whole.
 
 ## What Atlas does not do
 

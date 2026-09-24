@@ -28,7 +28,7 @@ A Harmonia Atlas application update or Lumina update does not require an HXS for
 Current producer metadata is:
 
 ```text
-Harmonia Atlas: 0.2.0
+Harmonia Atlas: 0.3.0
 Lumina:          7.7.0
 ```
 

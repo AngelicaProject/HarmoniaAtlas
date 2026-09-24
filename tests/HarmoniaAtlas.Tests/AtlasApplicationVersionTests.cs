@@ -15,13 +15,13 @@ public sealed class AtlasApplicationVersionTests
         Assert.Equal(
             AtlasApplicationVersion.NormalizeInformationalVersion(informationalVersion),
             AtlasApplicationVersion.Current);
-        Assert.Equal("0.2.0", AtlasApplicationVersion.Current);
+        Assert.Equal("0.3.0", AtlasApplicationVersion.Current);
     }
 
     [Theory]
-    [InlineData("0.2.0", "0.2.0")]
-    [InlineData("0.2.0+abcdef", "0.2.0")]
-    [InlineData(" 0.2.0+abcdef ", "0.2.0")]
+    [InlineData("0.3.0", "0.3.0")]
+    [InlineData("0.3.0+abcdef", "0.3.0")]
+    [InlineData(" 0.3.0+abcdef ", "0.3.0")]
     public void InformationalVersionMetadataIsRemoved(string informationalVersion, string expected)
     {
         Assert.Equal(expected, AtlasApplicationVersion.NormalizeInformationalVersion(informationalVersion));
