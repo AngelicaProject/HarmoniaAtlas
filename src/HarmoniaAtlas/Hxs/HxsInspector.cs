@@ -14,7 +14,8 @@ public sealed record HxsInspection(
     [property: JsonPropertyName("luminaVersion")] string LuminaVersion,
     [property: JsonPropertyName("sheetCount")] long SheetCount,
     [property: JsonPropertyName("rowCount")] long RowCount,
-    [property: JsonPropertyName("stringCellCount")] long StringCellCount)
+    [property: JsonPropertyName("stringCellCount")] long StringCellCount,
+    [property: JsonPropertyName("excludedSheetCount")] long ExcludedSheetCount)
 {
     public static HxsInspection FromMetadata(HxsMetadata metadata) => new(
         metadata.FormatVersion,
@@ -27,7 +28,8 @@ public sealed record HxsInspection(
         metadata.LuminaVersion,
         metadata.SheetCount,
         metadata.RowCount,
-        metadata.StringCellCount);
+        metadata.StringCellCount,
+        metadata.ExcludedSheetCount);
 
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
 
@@ -43,7 +45,8 @@ public sealed record HxsInspection(
         $"Lumina version: {LuminaVersion}",
         $"Sheet count: {SheetCount}",
         $"Row count: {RowCount}",
-        $"String cell count: {StringCellCount}");
+        $"String cell count: {StringCellCount}",
+        $"Excluded sheet count: {ExcludedSheetCount}");
 }
 
 public static class HxsInspector

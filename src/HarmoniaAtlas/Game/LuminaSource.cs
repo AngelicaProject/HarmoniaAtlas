@@ -2,11 +2,12 @@ using Lumina;
 using Lumina.Data;
 using Lumina.Data.Structs.Excel;
 using Lumina.Excel;
+using HarmoniaAtlas.Hxs;
 using HarmoniaAtlas.Model;
 
 namespace HarmoniaAtlas.Game;
 
-public sealed class LuminaSource : IDisposable
+public sealed class LuminaSource : IDisposable, IExtractionSource
 {
     private readonly GameData _gameData;
     private readonly Language _language;
@@ -53,26 +54,63 @@ public sealed class LuminaSource : IDisposable
         return rawSheet.Columns.Select(column => LuminaColumnTypeMapper.Map(column.Type)).ToArray();
     }
 
+    /// <summary>
+    /// Opens one sheet. A sheet that cannot be represented or read raises
+    /// <see cref="SheetReadException"/>.
+    /// </summary>
     public LuminaSheet OpenSheet(string sheetName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sheetName);
 
-        RawExcelSheet rawSheet = _gameData.Excel.GetRawSheet(sheetName, _language);
+        RawExcelSheet rawSheet;
+        try
+        {
+            rawSheet = _gameData.Excel.GetRawSheet(sheetName, _language);
+        }
+        catch (Exception exception) when (SheetReadException.IsSheetScoped(exception))
+        {
+            throw Unreadable(sheetName, exception);
+        }
+
         HarmoniaSheetVariant harmoniaVariant = rawSheet is RawSubrowExcelSheet
             ? HarmoniaSheetVariant.Subrows
             : rawSheet.GetType() == typeof(RawExcelSheet)
                 ? HarmoniaSheetVariant.DefaultRows
-                : throw new NotSupportedException($"Unsupported Lumina sheet variant for '{sheetName}'.");
+                : throw new SheetReadException(
+                    sheetName,
+                    HxsSheetExclusionReason.UnsupportedVariant,
+                    $"Unsupported Lumina sheet variant for '{sheetName}'.");
 
-        IReadOnlyList<HarmoniaColumnDefinition> columns = rawSheet.Columns
-            .Select((column, index) => new HarmoniaColumnDefinition(index, column.Offset, LuminaColumnTypeMapper.Map(column.Type)))
-            .ToArray();
-        string effectiveLanguage = GameLanguageParser.ToCode(rawSheet.Language);
-        HarmoniaSheetInfo info = new(sheetName, harmoniaVariant, effectiveLanguage, columns);
-        return harmoniaVariant == HarmoniaSheetVariant.DefaultRows
-            ? new LuminaSheet(rawSheet, info, _gameData.Excel.GetSheet<RawRow>(_language, sheetName), null)
-            : new LuminaSheet(rawSheet, info, null, _gameData.Excel.GetSubrowSheet<RawSubrow>(_language, sheetName));
+        IReadOnlyList<HarmoniaColumnDefinition> columns;
+        try
+        {
+            columns = rawSheet.Columns
+                .Select((column, index) => new HarmoniaColumnDefinition(index, column.Offset, LuminaColumnTypeMapper.Map(column.Type)))
+                .ToArray();
+        }
+        catch (NotSupportedException exception)
+        {
+            throw new SheetReadException(sheetName, HxsSheetExclusionReason.UnsupportedColumnType, exception.Message, exception);
+        }
+
+        try
+        {
+            string effectiveLanguage = GameLanguageParser.ToCode(rawSheet.Language);
+            HarmoniaSheetInfo info = new(sheetName, harmoniaVariant, effectiveLanguage, columns);
+            return harmoniaVariant == HarmoniaSheetVariant.DefaultRows
+                ? new LuminaSheet(rawSheet, info, _gameData.Excel.GetSheet<RawRow>(_language, sheetName), null)
+                : new LuminaSheet(rawSheet, info, null, _gameData.Excel.GetSubrowSheet<RawSubrow>(_language, sheetName));
+        }
+        catch (Exception exception) when (SheetReadException.IsSheetScoped(exception))
+        {
+            throw Unreadable(sheetName, exception);
+        }
     }
+
+    IExtractionSheet IExtractionSource.OpenSheet(string sheetName) => OpenSheet(sheetName);
+
+    private static SheetReadException Unreadable(string sheetName, Exception exception) =>
+        new(sheetName, HxsSheetExclusionReason.UnreadableData, $"Sheet '{sheetName}' cannot be read: {exception.Message}", exception);
 
     public void Dispose() => _gameData.Dispose();
 }

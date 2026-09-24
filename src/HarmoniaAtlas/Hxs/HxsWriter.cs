@@ -22,6 +22,7 @@ public sealed class HxsWriter
             LuminaVersion.Current,
             0,
             0,
+            0,
             0);
         session.WriteMetadata(metadata);
         session.Complete();
@@ -40,6 +41,9 @@ public sealed class HxsWriteSession : IDisposable
     private readonly SqliteCommand _insertRow;
     private readonly SqliteCommand _insertStringCell;
     private readonly SqliteCommand _insertMeta;
+    private readonly SqliteCommand _insertExcludedSheet;
+    private const string SheetSavepoint = "hxs_sheet";
+    private bool _sheetSavepointOpen;
     private bool _metadataWritten;
     private bool _completed;
     private bool _disposed;
@@ -122,8 +126,12 @@ public sealed class HxsWriteSession : IDisposable
                 ("$raw_value", SqliteType.Blob),
                 ("$macro_hash", SqliteType.Blob),
                 ("$raw_hash", SqliteType.Blob));
+            _insertExcludedSheet = Prepare(
+                "INSERT INTO excluded_sheets (name, reason) VALUES ($name, $reason);",
+                ("$name", SqliteType.Text),
+                ("$reason", SqliteType.Integer));
             _insertMeta = Prepare(
-                "INSERT INTO hxs_meta (id, format_version, game_version, language, scope, content_id, snapshot_id, extractor_version, lumina_version, sheet_count, row_count, string_cell_count) VALUES (1, $format_version, $game_version, $language, $scope, $content_id, $snapshot_id, $extractor_version, $lumina_version, $sheet_count, $row_count, $string_cell_count);",
+                "INSERT INTO hxs_meta (id, format_version, game_version, language, scope, content_id, snapshot_id, extractor_version, lumina_version, sheet_count, row_count, string_cell_count, excluded_sheet_count) VALUES (1, $format_version, $game_version, $language, $scope, $content_id, $snapshot_id, $extractor_version, $lumina_version, $sheet_count, $row_count, $string_cell_count, $excluded_sheet_count);",
                 ("$format_version", SqliteType.Integer),
                 ("$game_version", SqliteType.Text),
                 ("$language", SqliteType.Text),
@@ -134,7 +142,8 @@ public sealed class HxsWriteSession : IDisposable
                 ("$lumina_version", SqliteType.Text),
                 ("$sheet_count", SqliteType.Integer),
                 ("$row_count", SqliteType.Integer),
-                ("$string_cell_count", SqliteType.Integer));
+                ("$string_cell_count", SqliteType.Integer),
+                ("$excluded_sheet_count", SqliteType.Integer));
         }
         catch
         {
@@ -149,6 +158,56 @@ public sealed class HxsWriteSession : IDisposable
 
             TryDeletePartial(_partialPath);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Starts a sheet that may still be abandoned. Everything written until
+    /// <see cref="CommitSheet"/> is discarded by <see cref="AbandonSheet"/>.
+    /// </summary>
+    public void BeginSheetScope()
+    {
+        ThrowIfDisposed();
+        if (_sheetSavepointOpen)
+        {
+            throw new InvalidOperationException("An HXS sheet scope is already open.");
+        }
+
+        _transaction.Save(SheetSavepoint);
+        _sheetSavepointOpen = true;
+    }
+
+    public void CommitSheet()
+    {
+        ThrowIfDisposed();
+        RequireSheetScope();
+        _transaction.Release(SheetSavepoint);
+        _sheetSavepointOpen = false;
+    }
+
+    public void AbandonSheet()
+    {
+        ThrowIfDisposed();
+        RequireSheetScope();
+        _transaction.Rollback(SheetSavepoint);
+        _transaction.Release(SheetSavepoint);
+        _sheetSavepointOpen = false;
+    }
+
+    public void WriteExcludedSheet(HxsExcludedSheet sheet)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(sheet);
+        SetParameter(_insertExcludedSheet, "$name", sheet.Name);
+        SetParameter(_insertExcludedSheet, "$reason", (int)sheet.Reason);
+        _insertExcludedSheet.ExecuteNonQuery();
+    }
+
+    private void RequireSheetScope()
+    {
+        if (!_sheetSavepointOpen)
+        {
+            throw new InvalidOperationException("No HXS sheet scope is open.");
         }
     }
 
@@ -243,6 +302,7 @@ public sealed class HxsWriteSession : IDisposable
         SetParameter(_insertMeta, "$sheet_count", metadata.SheetCount);
         SetParameter(_insertMeta, "$row_count", metadata.RowCount);
         SetParameter(_insertMeta, "$string_cell_count", metadata.StringCellCount);
+        SetParameter(_insertMeta, "$excluded_sheet_count", metadata.ExcludedSheetCount);
         _insertMeta.ExecuteNonQuery();
         _metadataWritten = true;
     }
@@ -253,6 +313,11 @@ public sealed class HxsWriteSession : IDisposable
         if (!_metadataWritten)
         {
             throw new InvalidOperationException("HXS metadata must be written before completion.");
+        }
+
+        if (_sheetSavepointOpen)
+        {
+            throw new InvalidOperationException("An HXS sheet scope is still open.");
         }
 
         _transaction.Commit();
@@ -322,6 +387,7 @@ public sealed class HxsWriteSession : IDisposable
         TryDispose(_insertRow);
         TryDispose(_insertStringCell);
         TryDispose(_insertMeta);
+        TryDispose(_insertExcludedSheet);
     }
 
     private void DisposeTransaction()

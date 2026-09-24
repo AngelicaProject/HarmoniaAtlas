@@ -13,7 +13,20 @@ public sealed record HxsMetadata(
     string LuminaVersion,
     long SheetCount,
     long RowCount,
-    long StringCellCount);
+    long StringCellCount,
+    long ExcludedSheetCount);
+
+/// <summary>
+/// Why a sheet in the game catalog is not stored in an HXS. Codes are persisted.
+/// </summary>
+public enum HxsSheetExclusionReason
+{
+    UnsupportedVariant = 1,
+    UnsupportedColumnType = 2,
+    UnreadableData = 3,
+}
+
+public sealed record HxsExcludedSheet(string Name, HxsSheetExclusionReason Reason);
 
 public sealed record HxsStringCellRecord(
     uint RowId,
@@ -59,4 +72,5 @@ public sealed record HxsSheetRecord(
 
 public sealed record HxsSnapshotSummary(
     HxsMetadata Metadata,
-    IReadOnlyList<HxsSheetRecord> Sheets);
+    IReadOnlyList<HxsSheetRecord> Sheets,
+    IReadOnlyList<HxsExcludedSheet> ExcludedSheets);

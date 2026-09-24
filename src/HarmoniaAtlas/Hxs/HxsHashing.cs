@@ -162,18 +162,32 @@ public static class HxsHashing
         });
     }
 
-    public static string ComputeContentId(string language, IReadOnlyList<HxsSheetRecord> sheets)
+    public static string ComputeContentId(string language, IReadOnlyList<HxsSheetRecord> sheets) =>
+        ComputeContentId(language, sheets, Array.Empty<HxsExcludedSheet>());
+
+    public static string ComputeContentId(
+        string language,
+        IReadOnlyList<HxsSheetRecord> sheets,
+        IReadOnlyList<HxsExcludedSheet> excludedSheets)
     {
         byte[] hash = CanonicalHasher.ComputeHash(hasher =>
         {
-            hasher.WriteDomain("HARMONIA-HXS-CONTENT-v1");
+            hasher.WriteDomain("HARMONIA-HXS-CONTENT-v2");
             hasher.WriteUtf8(language);
+            hasher.WriteUInt32(checked((uint)sheets.Count));
             foreach (HxsSheetRecord sheet in sheets.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
             {
                 hasher.WriteUtf8(sheet.Name);
                 hasher.WriteUtf8(sheet.EffectiveLanguage);
                 hasher.WriteBytes(sheet.SchemaHash);
                 hasher.WriteBytes(sheet.ContentHash);
+            }
+
+            hasher.WriteUInt32(checked((uint)excludedSheets.Count));
+            foreach (HxsExcludedSheet sheet in excludedSheets.OrderBy(sheet => sheet.Name, StringComparer.Ordinal))
+            {
+                hasher.WriteUtf8(sheet.Name);
+                hasher.WriteUInt32((uint)sheet.Reason);
             }
         });
 

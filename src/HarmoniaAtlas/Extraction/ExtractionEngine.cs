@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using HarmoniaAtlas.Game;
 using HarmoniaAtlas.Hxs;
 using HarmoniaAtlas.Model;
@@ -12,7 +13,8 @@ public sealed record ExtractionSummary(
     int SheetCount,
     long RowCount,
     long StringCount,
-    string OutputPath);
+    string OutputPath,
+    IReadOnlyList<HxsExcludedSheet> ExcludedSheets);
 
 public sealed record ExtractionProgress(
     string Sheet,
@@ -32,72 +34,74 @@ public sealed class ExtractionEngine
         GameInstallation installation = GameInstallation.FromPath(gamePath);
         GameLanguage requestedLanguage = GameLanguageParser.Parse(language);
         string gameVersion = new GameVersionReader().Read(installation);
-        string languageCode = requestedLanguage.ToCode();
 
         using LuminaSource source = LuminaSource.Open(installation, requestedLanguage);
+        return Extract(source, gameVersion, requestedLanguage.ToCode(), outputPath, progress);
+    }
+
+    /// <summary>
+    /// Extracts every sheet of <paramref name="source"/>. A sheet that raises
+    /// <see cref="SheetReadException"/> is rolled back and recorded as excluded;
+    /// any other failure aborts the snapshot. A catalog in which no sheet can be
+    /// read is treated as a failure of the whole source.
+    /// </summary>
+    public ExtractionSummary Extract(
+        IExtractionSource source,
+        string gameVersion,
+        string languageCode,
+        string outputPath,
+        Action<ExtractionProgress>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
         using HxsWriteSession writer = new HxsWriter().Begin(outputPath);
 
         List<HxsSheetRecord> sheets = new();
+        List<HxsExcludedSheet> excludedSheets = new();
         long totalRows = 0;
         long totalStrings = 0;
         string[] sheetNames = source.SheetNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
-        foreach (string sheetName in sheetNames)
+        for (int index = 0; index < sheetNames.Length; index++)
         {
-            int sheetIndex = Array.IndexOf(sheetNames, sheetName) + 1;
+            string sheetName = sheetNames[index];
+            int sheetIndex = index + 1;
+            long rowsBefore = totalRows;
             progress?.Invoke(new ExtractionProgress(sheetName, sheetIndex, sheetNames.Length, totalRows, false));
-            LuminaSheet sheet = source.OpenSheet(sheetName);
-            HarmoniaSheetInfo info = sheet.Info;
-            byte[] schemaHash = HxsHashing.HashSchema(info.Name, info.Variant, info.Columns);
-            HxsSheetRecord startingSheet = new(
-                info.Name,
-                info.Variant,
-                info.EffectiveLanguage,
-                info.Columns,
-                0,
-                schemaHash,
-                new byte[32],
-                new byte[32],
-                new byte[32]);
-            int sheetId = writer.BeginSheet(startingSheet);
-            HxsSheetHashAccumulator hashAccumulator = new(info.Name);
-            int rowCount = 0;
-            long stringCount = 0;
-            long lastProgressTimestamp = Environment.TickCount64;
-
-            foreach (HarmoniaRowData row in sheet.EnumerateRows())
+            writer.BeginSheetScope();
+            try
             {
-                HxsRowRecord rowRecord = RowCanonicalizer.Create(info.Name, row);
-                writer.WriteRow(sheetId, rowRecord);
-                hashAccumulator.AddRow(rowRecord);
-                rowCount = checked(rowCount + 1);
-                stringCount = checked(stringCount + rowRecord.StringCells.Count);
-                if (progress is not null &&
-                    (rowCount % 1000 == 0 || Environment.TickCount64 - lastProgressTimestamp >= 250))
-                {
-                    progress(new ExtractionProgress(sheetName, sheetIndex, sheetNames.Length, totalRows + rowCount, false));
-                    lastProgressTimestamp = Environment.TickCount64;
-                }
+                (HxsSheetRecord sheet, long stringCount) = ExtractSheet(
+                    source,
+                    sheetName,
+                    writer,
+                    rowsProcessed => progress?.Invoke(new ExtractionProgress(
+                        sheetName,
+                        sheetIndex,
+                        sheetNames.Length,
+                        rowsBefore + rowsProcessed,
+                        false)));
+                writer.CommitSheet();
+                sheets.Add(sheet);
+                totalRows = checked(totalRows + sheet.RowCount);
+                totalStrings = checked(totalStrings + stringCount);
+            }
+            catch (SheetReadException exception)
+            {
+                writer.AbandonSheet();
+                HxsExcludedSheet excluded = new(sheetName, exception.Reason);
+                writer.WriteExcludedSheet(excluded);
+                excludedSheets.Add(excluded);
             }
 
-            byte[] technicalHash = hashAccumulator.ComputeTechnicalHash();
-            byte[] stringHash = hashAccumulator.ComputeStringHash();
-            byte[] contentHash = HxsHashing.HashSheetContent(info.Name, info.Variant, schemaHash, technicalHash, stringHash);
-            HxsSheetRecord completedSheet = startingSheet with
-            {
-                RowCount = rowCount,
-                TechnicalHash = technicalHash,
-                StringHash = stringHash,
-                ContentHash = contentHash,
-            };
-            writer.CompleteSheet(sheetId, completedSheet);
-            sheets.Add(completedSheet);
-            totalRows = checked(totalRows + rowCount);
-            totalStrings = checked(totalStrings + stringCount);
             progress?.Invoke(new ExtractionProgress(sheetName, sheetIndex, sheetNames.Length, totalRows, true));
         }
 
-        string contentId = HxsHashing.ComputeContentId(languageCode, sheets);
+        if (sheetNames.Length > 0 && sheets.Count == 0)
+        {
+            throw new InvalidDataException("No sheet of the game catalog could be read; the installation or its data is unusable.");
+        }
+
+        string contentId = HxsHashing.ComputeContentId(languageCode, sheets, excludedSheets);
         string snapshotId = HxsHashing.ComputeSnapshotId(gameVersion, languageCode, contentId);
         writer.WriteMetadata(new HxsMetadata(
             HxsFormatVersion.Current,
@@ -110,7 +114,8 @@ public sealed class ExtractionEngine
             LuminaVersion.Current,
             sheets.Count,
             totalRows,
-            totalStrings));
+            totalStrings,
+            excludedSheets.Count));
         writer.Complete();
 
         return new ExtractionSummary(
@@ -121,8 +126,126 @@ public sealed class ExtractionEngine
             sheets.Count,
             totalRows,
             totalStrings,
-            Path.GetFullPath(outputPath));
+            Path.GetFullPath(outputPath),
+            excludedSheets);
     }
+
+    private static (HxsSheetRecord Sheet, long StringCount) ExtractSheet(
+        IExtractionSource source,
+        string sheetName,
+        HxsWriteSession writer,
+        Action<long> progress)
+    {
+        IExtractionSheet sheet = source.OpenSheet(sheetName);
+        HarmoniaSheetInfo info = sheet.Info;
+        byte[] schemaHash = HxsHashing.HashSchema(info.Name, info.Variant, info.Columns);
+        HxsSheetRecord startingSheet = new(
+            info.Name,
+            info.Variant,
+            info.EffectiveLanguage,
+            info.Columns,
+            0,
+            schemaHash,
+            new byte[32],
+            new byte[32],
+            new byte[32]);
+        int sheetId = writer.BeginSheet(startingSheet);
+        HxsSheetHashAccumulator hashAccumulator = new(info.Name);
+        int rowCount = 0;
+        long stringCount = 0;
+        long lastProgressTimestamp = Environment.TickCount64;
+
+        using (SheetRowReader rows = new(sheet))
+        {
+            while (rows.TryReadNext(out HxsRowRecord? rowRecord))
+            {
+                writer.WriteRow(sheetId, rowRecord);
+                hashAccumulator.AddRow(rowRecord);
+                rowCount = checked(rowCount + 1);
+                stringCount = checked(stringCount + rowRecord.StringCells.Count);
+                if (rowCount % 1000 == 0 || Environment.TickCount64 - lastProgressTimestamp >= 250)
+                {
+                    progress(rowCount);
+                    lastProgressTimestamp = Environment.TickCount64;
+                }
+            }
+        }
+
+        byte[] technicalHash = hashAccumulator.ComputeTechnicalHash();
+        byte[] stringHash = hashAccumulator.ComputeStringHash();
+        byte[] contentHash = HxsHashing.HashSheetContent(info.Name, info.Variant, schemaHash, technicalHash, stringHash);
+        HxsSheetRecord completedSheet = startingSheet with
+        {
+            RowCount = rowCount,
+            TechnicalHash = technicalHash,
+            StringHash = stringHash,
+            ContentHash = contentHash,
+        };
+        writer.CompleteSheet(sheetId, completedSheet);
+        return (completedSheet, stringCount);
+    }
+}
+
+/// <summary>
+/// Reads and canonicalizes the rows of one sheet. Every failure raised by the
+/// game data or by canonicalization is attributed to the sheet; failures of the
+/// HXS writer never pass through this reader.
+/// </summary>
+internal sealed class SheetRowReader : IDisposable
+{
+    private readonly string _sheetName;
+    private readonly IEnumerator<HarmoniaRowData> _rows;
+
+    public SheetRowReader(IExtractionSheet sheet)
+    {
+        _sheetName = sheet.Info.Name;
+        try
+        {
+            _rows = sheet.EnumerateRows().GetEnumerator();
+        }
+        catch (Exception exception) when (SheetReadException.IsSheetScoped(exception))
+        {
+            throw Unreadable(exception);
+        }
+    }
+
+    public bool TryReadNext([NotNullWhen(true)] out HxsRowRecord? row)
+    {
+        try
+        {
+            if (!_rows.MoveNext())
+            {
+                row = null;
+                return false;
+            }
+
+            row = RowCanonicalizer.Create(_sheetName, _rows.Current);
+            return true;
+        }
+        catch (SheetReadException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (SheetReadException.IsSheetScoped(exception))
+        {
+            throw Unreadable(exception);
+        }
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            _rows.Dispose();
+        }
+        catch (Exception exception) when (SheetReadException.IsSheetScoped(exception))
+        {
+            throw Unreadable(exception);
+        }
+    }
+
+    private SheetReadException Unreadable(Exception exception) =>
+        new(_sheetName, HxsSheetExclusionReason.UnreadableData, $"Sheet '{_sheetName}' cannot be read: {exception.Message}", exception);
 }
 
 internal static class RowCanonicalizer

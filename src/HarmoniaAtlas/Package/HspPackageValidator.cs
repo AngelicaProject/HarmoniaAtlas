@@ -125,9 +125,9 @@ public static class HspPackageValidator
             if (component.Required && component.Kind == "sourceHxs")
             {
                 sourceCount++;
-                if (component.FormatVersion != 1 || component.Path != "source/source.hxs")
+                if (component.FormatVersion != Hxs.HxsFormatVersion.Current || component.Path != "source/source.hxs")
                 {
-                    throw new HspFormatException("The required sourceHxs component has an invalid v1 descriptor.");
+                    throw new HspFormatException("The required sourceHxs component has an invalid descriptor.");
                 }
             }
 

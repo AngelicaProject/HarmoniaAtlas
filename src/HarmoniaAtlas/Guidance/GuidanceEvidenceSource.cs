@@ -43,18 +43,36 @@ public interface IGuidanceEvidenceSource : IDisposable
     string? ContentId { get; }
     string? SnapshotId { get; }
     IReadOnlyDictionary<string, GuidanceSheetMetadata> Sheets { get; }
+
+    /// <summary>
+    /// Sheets of the game catalog that this input could not read. They are
+    /// absent from <see cref="Sheets"/>.
+    /// </summary>
+    IReadOnlySet<string> UnreadableSheets => EmptySheets;
+
+    /// <summary>
+    /// Reads one sheet's String rows. A sheet that fails while being read
+    /// raises <see cref="SheetReadException"/>.
+    /// </summary>
     IEnumerable<GuidanceStringRow> ReadStringRows(string sheetName);
+
+    private static readonly IReadOnlySet<string> EmptySheets = new HashSet<string>(StringComparer.Ordinal);
 }
 
 public sealed class HxsGuidanceEvidenceSource : IGuidanceEvidenceSource
 {
     private readonly HxsReader _reader;
 
-    private HxsGuidanceEvidenceSource(HxsReader reader, HxsMetadata metadata, IReadOnlyDictionary<string, GuidanceSheetMetadata> sheets)
+    private HxsGuidanceEvidenceSource(
+        HxsReader reader,
+        HxsMetadata metadata,
+        IReadOnlyDictionary<string, GuidanceSheetMetadata> sheets,
+        IReadOnlySet<string> unreadableSheets)
     {
         _reader = reader;
         Metadata = metadata;
         Sheets = sheets;
+        UnreadableSheets = unreadableSheets;
     }
 
     public HxsMetadata Metadata { get; }
@@ -64,6 +82,7 @@ public sealed class HxsGuidanceEvidenceSource : IGuidanceEvidenceSource
     public string? ContentId => Metadata.ContentId;
     public string? SnapshotId => Metadata.SnapshotId;
     public IReadOnlyDictionary<string, GuidanceSheetMetadata> Sheets { get; }
+    public IReadOnlySet<string> UnreadableSheets { get; }
 
     public static HxsGuidanceEvidenceSource OpenVerified(string path)
     {
@@ -103,7 +122,10 @@ public sealed class HxsGuidanceEvidenceSource : IGuidanceEvidenceSource
                         sheet.SchemaHash,
                         GuidanceLanguageSafety.IsSafe(metadata.Language, sheet.EffectiveLanguage)),
                     StringComparer.Ordinal);
-            return new HxsGuidanceEvidenceSource(reader, metadata, sheets);
+            HashSet<string> unreadable = reader.ReadExcludedSheets()
+                .Select(sheet => sheet.Name)
+                .ToHashSet(StringComparer.Ordinal);
+            return new HxsGuidanceEvidenceSource(reader, metadata, sheets, unreadable);
         }
         catch
         {
@@ -136,12 +158,14 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
         string gameVersion,
         IReadOnlyDictionary<string, GuidanceSheetMetadata> sheets,
         IReadOnlyDictionary<string, LuminaSheet> luminaSheets,
+        IReadOnlySet<string> unreadableSheets,
         string language)
     {
         _source = source;
         _luminaSheets = luminaSheets;
         GameVersion = gameVersion;
         Sheets = sheets;
+        UnreadableSheets = unreadableSheets;
         Language = language;
     }
 
@@ -151,6 +175,7 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
     public string? ContentId => null;
     public string? SnapshotId => null;
     public IReadOnlyDictionary<string, GuidanceSheetMetadata> Sheets { get; }
+    public IReadOnlySet<string> UnreadableSheets { get; }
 
     public static LuminaGuidanceEvidenceSource Open(GameInstallation installation, GameLanguage language)
     {
@@ -162,10 +187,21 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
             string gameVersion = new GameVersionReader().Read(installation);
             Dictionary<string, LuminaSheet> luminaSheets = new(StringComparer.Ordinal);
             Dictionary<string, GuidanceSheetMetadata> sheets = new(StringComparer.Ordinal);
+            HashSet<string> unreadable = new(StringComparer.Ordinal);
             string[] names = source.SheetNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
             foreach (string sheetName in names)
             {
-                LuminaSheet sheet = source.OpenSheet(sheetName);
+                LuminaSheet sheet;
+                try
+                {
+                    sheet = source.OpenSheet(sheetName);
+                }
+                catch (SheetReadException)
+                {
+                    unreadable.Add(sheetName);
+                    continue;
+                }
+
                 HarmoniaSheetInfo info = sheet.Info;
                 byte[] schemaHash = HxsHashing.HashSchema(info.Name, info.Variant, info.Columns);
                 bool languageSafe = GuidanceLanguageSafety.IsSafe(languageCode, info.EffectiveLanguage);
@@ -179,7 +215,7 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
                     languageSafe));
             }
 
-            return new LuminaGuidanceEvidenceSource(source, gameVersion, sheets, luminaSheets, languageCode);
+            return new LuminaGuidanceEvidenceSource(source, gameVersion, sheets, luminaSheets, unreadable, languageCode);
         }
         catch
         {
@@ -190,12 +226,41 @@ public sealed class LuminaGuidanceEvidenceSource : IGuidanceEvidenceSource
 
     public IEnumerable<GuidanceStringRow> ReadStringRows(string sheetName)
     {
-        foreach (LuminaStringRow row in _luminaSheets[sheetName].EnumerateStringRows())
+        IEnumerator<LuminaStringRow> rows = Guard(sheetName, () => _luminaSheets[sheetName].EnumerateStringRows().GetEnumerator());
+        try
         {
-            yield return new GuidanceStringRow(
-                row.RowId,
-                row.SubrowId,
-                row.Values.Select(value => new GuidanceStringValue(value.ColumnIndex, value.MacroText)).ToArray());
+            while (Guard(sheetName, rows.MoveNext))
+            {
+                LuminaStringRow row = rows.Current;
+                yield return new GuidanceStringRow(
+                    row.RowId,
+                    row.SubrowId,
+                    row.Values.Select(value => new GuidanceStringValue(value.ColumnIndex, value.MacroText)).ToArray());
+            }
+        }
+        finally
+        {
+            rows.Dispose();
+        }
+    }
+
+    private static T Guard<T>(string sheetName, Func<T> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (SheetReadException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (SheetReadException.IsSheetScoped(exception))
+        {
+            throw new SheetReadException(
+                sheetName,
+                HxsSheetExclusionReason.UnreadableData,
+                $"Sheet '{sheetName}' cannot be read: {exception.Message}",
+                exception);
         }
     }
 

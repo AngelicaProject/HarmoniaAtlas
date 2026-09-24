@@ -85,12 +85,20 @@ public static class HxsVerifier
             actualStringCount = checked(actualStringCount + stringCount);
         }
 
-        if (metadata.SheetCount != sheets.Count || metadata.RowCount != actualRowCount || metadata.StringCellCount != actualStringCount)
+        IReadOnlyList<HxsExcludedSheet> excludedSheets = HxsQueries.ReadExcludedSheets(database.Connection);
+        HashSet<string> storedNames = sheets.Select(sheet => sheet.Name).ToHashSet(StringComparer.Ordinal);
+        if (excludedSheets.Any(sheet => storedNames.Contains(sheet.Name)))
+        {
+            throw new HxsFormatException("An HXS sheet is both stored and excluded.");
+        }
+
+        if (metadata.SheetCount != sheets.Count || metadata.RowCount != actualRowCount ||
+            metadata.StringCellCount != actualStringCount || metadata.ExcludedSheetCount != excludedSheets.Count)
         {
             throw new HxsFormatException("HXS metadata counts do not match the stored artifact.");
         }
 
-        string contentId = HxsHashing.ComputeContentId(metadata.Language, sheets);
+        string contentId = HxsHashing.ComputeContentId(metadata.Language, sheets, excludedSheets);
         if (!string.Equals(metadata.ContentId, contentId, StringComparison.Ordinal))
         {
             throw new HxsFormatException("HXS content_id does not match the stored source content.");
@@ -289,7 +297,8 @@ public static class HxsVerifier
         if (metadata.FormatVersion != HxsFormatVersion.Current || metadata.Scope != "full" ||
             string.IsNullOrWhiteSpace(metadata.GameVersion) || string.IsNullOrWhiteSpace(metadata.Language) ||
             string.IsNullOrWhiteSpace(metadata.ExtractorVersion) || string.IsNullOrWhiteSpace(metadata.LuminaVersion) ||
-            metadata.SheetCount < 0 || metadata.RowCount < 0 || metadata.StringCellCount < 0)
+            metadata.SheetCount < 0 || metadata.RowCount < 0 || metadata.StringCellCount < 0 ||
+            metadata.ExcludedSheetCount < 0)
         {
             throw new HxsFormatException("HXS metadata is invalid.");
         }

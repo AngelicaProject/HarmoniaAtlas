@@ -44,7 +44,7 @@ The current manifest shape is:
     {
       "id": "source",
       "kind": "sourceHxs",
-      "formatVersion": 1,
+      "formatVersion": 2,
       "required": true,
       "path": "source/source.hxs",
       "size": 123456789,
@@ -56,7 +56,7 @@ The current manifest shape is:
 
 Component IDs and paths are unique. Paths are normalized relative paths using `/`; absolute paths, backslashes, `.` segments, and `..` segments are invalid. `size` is the exact uncompressed byte size and `sha256` is the SHA-256 hash of the exact component bytes.
 
-The required v1 components are exactly one `sourceHxs` component at `source/source.hxs` and exactly one `sourceGuidance` component at `guidance/source-guidance.json`.
+The required v1 components are exactly one `sourceHxs` component at `source/source.hxs` with the HXS format version (`2`) as its `formatVersion`, and exactly one `sourceGuidance` component at `guidance/source-guidance.json` with `formatVersion` `1`.
 
 ## Source identity
 
@@ -76,7 +76,7 @@ Unknown optional component kinds are integrity-checked and may be ignored. Unkno
 
 ## Compatibility
 
-HSP v1 embeds HXS Format v1 and Source Guidance Format v1. It does not add EXDSchema or semantic metadata.
+HSP v1 embeds HXS Format v2 and Source Guidance Format v1. The component `formatVersion` identifies the embedded format, so a reader rejects a package whose `sourceHxs` version it does not support. It does not add EXDSchema or semantic metadata.
 
 ## Publication
 

@@ -103,6 +103,7 @@ public static class SourceGuidanceHashing
         SourceGuidanceIncompatibilityReason.ColumnDefinitionMismatch => "columnDefinitionMismatch",
         SourceGuidanceIncompatibilityReason.SchemaHashMismatch => "schemaHashMismatch",
         SourceGuidanceIncompatibilityReason.RowTopologyMismatch => "rowTopologyMismatch",
+        SourceGuidanceIncompatibilityReason.UnreadableInInput => "unreadableInInput",
         _ => throw new SourceGuidanceFormatException($"Unsupported guidance incompatibility reason: {value}.")
     };
 }
