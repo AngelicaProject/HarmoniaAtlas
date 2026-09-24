@@ -146,8 +146,8 @@ public sealed class PackagePipeline
 
             phase.Restart();
             emit?.Invoke(Phase("writePackage"));
-            HspComponentDescriptor guidanceComponent = Component("guidance", "sourceGuidance", "guidance/source-guidance.json", guidancePath);
-            HspComponentDescriptor sourceComponent = Component("source", "sourceHxs", "source/source.hxs", sourcePath);
+            HspComponentDescriptor guidanceComponent = Component("guidance", "sourceGuidance", 1, "guidance/source-guidance.json", guidancePath);
+            HspComponentDescriptor sourceComponent = Component("source", "sourceHxs", Hxs.HxsFormatVersion.Current, "source/source.hxs", sourcePath);
             HspManifest manifestWithoutId = new(
                 1,
                 string.Empty,
@@ -223,10 +223,10 @@ public sealed class PackagePipeline
         ["phase"] = phase,
     });
 
-    private static HspComponentDescriptor Component(string id, string kind, string path, string sourcePath)
+    private static HspComponentDescriptor Component(string id, string kind, int formatVersion, string path, string sourcePath)
     {
         FileInfo file = new(sourcePath);
-        return new HspComponentDescriptor(id, kind, 1, true, path, file.Length, HspHashing.ComputeFileHash(sourcePath));
+        return new HspComponentDescriptor(id, kind, formatVersion, true, path, file.Length, HspHashing.ComputeFileHash(sourcePath));
     }
 
     private static void TryDelete(string path)

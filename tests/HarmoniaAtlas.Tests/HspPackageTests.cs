@@ -272,7 +272,7 @@ public sealed class HspPackageTests
 
     private static HspManifest MinimalManifest()
     {
-        HspComponentDescriptor source = new("source", "sourceHxs", 1, true, "source/source.hxs", 1, "sha256:" + new string('0', 64));
+        HspComponentDescriptor source = new("source", "sourceHxs", HxsFormatVersion.Current, true, "source/source.hxs", 1, "sha256:" + new string('0', 64));
         HspComponentDescriptor guidance = new("guidance", "sourceGuidance", 1, true, "guidance/source-guidance.json", 1, "sha256:" + new string('1', 64));
         HspManifest withoutId = new(1, string.Empty, "game", "full", new HspSourceIdentity("en", "sha256:" + new string('2', 64), "sha256:" + new string('3', 64)), [guidance, source]);
         return withoutId with { PackageId = HspHashing.ComputePackageId(withoutId) };
@@ -328,7 +328,7 @@ public sealed class HspPackageTests
     }
 
     private static HspComponentDescriptor Component(string id, string kind, string path, string filePath) =>
-        new(id, kind, 1, true, path, new FileInfo(filePath).Length, HspHashing.ComputeFileHash(filePath));
+        new(id, kind, kind == "sourceHxs" ? HxsFormatVersion.Current : 1, true, path, new FileInfo(filePath).Length, HspHashing.ComputeFileHash(filePath));
 
     private static string CreateSnapshot(string root, string language, string value)
     {
@@ -350,7 +350,7 @@ public sealed class HspPackageTests
         int sheetId = session.BeginSheet(sheet);
         session.WriteRow(sheetId, row);
         session.CompleteSheet(sheetId, sheet);
-        session.WriteMetadata(new HxsMetadata(1, "game", language, "full", contentId, HxsHashing.ComputeSnapshotId("game", language, contentId), "test", "7.7.0", 1, 1, 1));
+        session.WriteMetadata(new HxsMetadata(HxsFormatVersion.Current, "game", language, "full", contentId, HxsHashing.ComputeSnapshotId("game", language, contentId), "test", "7.7.0", 1, 1, 1, 0));
         session.Complete();
         return path;
     }

@@ -19,6 +19,8 @@ public sealed class HxsReader : IDisposable
 
     public IReadOnlyList<HxsSheetRecord> ReadSheets() => HxsQueries.ReadSheets(_database.Connection);
 
+    public IReadOnlyList<HxsExcludedSheet> ReadExcludedSheets() => HxsQueries.ReadExcludedSheets(_database.Connection);
+
     public IEnumerable<HxsStringRowRecord> ReadStringRows(string sheetName) =>
         HxsQueries.ReadStringRows(_database.Connection, sheetName);
 

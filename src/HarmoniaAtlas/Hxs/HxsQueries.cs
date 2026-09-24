@@ -16,7 +16,7 @@ internal static class HxsQueries
         }
 
         using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = "SELECT format_version, game_version, language, scope, content_id, snapshot_id, extractor_version, lumina_version, sheet_count, row_count, string_cell_count FROM hxs_meta WHERE id = 1;";
+        command.CommandText = "SELECT format_version, game_version, language, scope, content_id, snapshot_id, extractor_version, lumina_version, sheet_count, row_count, string_cell_count, excluded_sheet_count FROM hxs_meta WHERE id = 1;";
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read())
         {
@@ -34,7 +34,28 @@ internal static class HxsQueries
             reader.GetString(7),
             reader.GetInt64(8),
             reader.GetInt64(9),
-            reader.GetInt64(10));
+            reader.GetInt64(10),
+            reader.GetInt64(11));
+    }
+
+    public static IReadOnlyList<HxsExcludedSheet> ReadExcludedSheets(SqliteConnection connection)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "SELECT name, reason FROM excluded_sheets ORDER BY name COLLATE BINARY;";
+        using SqliteDataReader reader = command.ExecuteReader();
+        List<HxsExcludedSheet> sheets = new();
+        while (reader.Read())
+        {
+            int reason = reader.GetInt32(1);
+            if (!Enum.IsDefined((HxsSheetExclusionReason)reason))
+            {
+                throw new HxsFormatException($"Unsupported HXS sheet exclusion reason: {reason}.");
+            }
+
+            sheets.Add(new HxsExcludedSheet(reader.GetString(0), (HxsSheetExclusionReason)reason));
+        }
+
+        return sheets;
     }
 
     public static IReadOnlyList<HxsSheetRecord> ReadSheets(SqliteConnection connection)

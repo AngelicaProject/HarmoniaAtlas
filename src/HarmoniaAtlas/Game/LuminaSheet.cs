@@ -4,7 +4,7 @@ using HarmoniaAtlas.Model;
 
 namespace HarmoniaAtlas.Game;
 
-public sealed class LuminaSheet
+public sealed class LuminaSheet : IExtractionSheet
 {
     private readonly IReadOnlyList<HarmoniaColumnDefinition> _columns;
     private readonly ExcelSheet<RawRow>? _defaultSheet;

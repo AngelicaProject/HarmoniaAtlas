@@ -351,7 +351,8 @@ public sealed class HxsPipelineTests
             WriteSynthetic(path, HarmoniaSheetVariant.DefaultRows, 0);
             string json = HxsInspector.Inspect(path).ToJson();
             using JsonDocument document = JsonDocument.Parse(json);
-            Assert.Equal(1, document.RootElement.GetProperty("hxsVersion").GetInt32());
+            Assert.Equal(2, document.RootElement.GetProperty("hxsVersion").GetInt32());
+            Assert.Equal(0, document.RootElement.GetProperty("excludedSheetCount").GetInt64());
             Assert.Equal("en", document.RootElement.GetProperty("language").GetString());
             Assert.Equal("full", document.RootElement.GetProperty("scope").GetString());
         }
@@ -425,7 +426,7 @@ public sealed class HxsPipelineTests
         HxsSheetRecord sheet = SyntheticSheet(technicalValue, stringValue, "game", "Synthetic", variant, subrowId);
         string contentId = HxsHashing.ComputeContentId("en", [sheet]);
         HxsMetadata metadata = new(
-            1,
+            HxsFormatVersion.Current,
             "game",
             "en",
             "full",
@@ -435,7 +436,8 @@ public sealed class HxsPipelineTests
             "7.7.0",
             1,
             1,
-            1);
+            1,
+            0);
 
         using HxsWriteSession session = new HxsWriter().Begin(path);
         int sheetId = session.BeginSheet(sheet);

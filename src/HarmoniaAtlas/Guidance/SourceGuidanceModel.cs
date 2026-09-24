@@ -15,6 +15,7 @@ public enum SourceGuidanceIncompatibilityReason
     ColumnDefinitionMismatch,
     SchemaHashMismatch,
     RowTopologyMismatch,
+    UnreadableInInput,
 }
 
 public sealed record SourceGuidanceSourceIdentity(

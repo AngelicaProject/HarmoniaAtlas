@@ -1,6 +1,6 @@
-# Harmonia Source Snapshot (HXS) Format v1
+# Harmonia Source Snapshot (HXS) Format v2
 
-This document specifies the HXS v1 format implemented by Harmonia Atlas.
+This document specifies the HXS v2 format implemented by Harmonia Atlas.
 
 HXS is an immutable, source-only artifact representing one complete Harmonia extraction of a local FINAL FANTASY XIV installation for one requested language. It is designed to be portable between local Harmonia Suite installations and future shared Harmonia services.
 
@@ -8,13 +8,18 @@ HXS is an immutable, source-only artifact representing one complete Harmonia ext
 
 HXS format versioning is independent from Harmonia Atlas application versioning and from Lumina versioning.
 
-For HXS v1:
+For HXS v2:
 
 ```text
-format version:       1
+format version:       2
 SQLite application_id: 0x4841544C
-SQLite user_version:   1
+SQLite user_version:   2
 ```
+
+HXS v2 adds the `excluded_sheets` table, the `hxs_meta.excluded_sheet_count`
+column, and the v2 `contentId` formula. Row, sheet, and snapshot hashes are
+unchanged from v1. Atlas writes and verifies v2 only; v1 files are read by
+earlier Atlas releases.
 
 `0x4841544C` is the Harmonia Atlas HXS SQLite marker (`HATL` in ASCII bytes).
 
@@ -31,7 +36,7 @@ These producer versions are provenance only. They are not part of `contentId`.
 
 ## 2. Scope and invariants
 
-An HXS v1 artifact is:
+An HXS v2 artifact is:
 
 - immutable after successful creation;
 - source-only;
@@ -47,7 +52,17 @@ Current canonical snapshots use:
 scope = "full"
 ```
 
-A full extraction enumerates the sheet catalog exposed by Lumina and aborts on an unsupported sheet variant, unsupported column type, unreadable row, SQLite failure, or any other extraction error. Atlas does not silently produce an incomplete full snapshot.
+A full extraction enumerates the sheet catalog exposed by Lumina. Every sheet of the catalog is either stored or listed in `excluded_sheets` with a reason; no sheet is silently omitted.
+
+A sheet is excluded when it cannot be represented or read:
+
+| Code | Reason |
+| ---: | --- |
+| `1` | Unsupported sheet variant |
+| `2` | Unsupported column type |
+| `3` | Unreadable data: the sheet header, a data page, or a row cannot be read or canonicalized |
+
+Rows already written for an excluded sheet are rolled back, so an excluded sheet has no rows, columns, or String cells. Extraction still aborts on SQLite or file-system failures, on failures that are not attributable to one sheet, and when no sheet of a non-empty catalog can be read.
 
 HXS does not define cross-version translation identity. Coordinates in an HXS identify source occurrences inside that snapshot.
 
@@ -106,17 +121,18 @@ The effective language is part of `contentId`.
 
 ## 5. SQLite requirements
 
-A completed HXS v1 file contains exactly these user-defined tables:
+A completed HXS v2 file contains exactly these user-defined tables:
 
 ```text
 hxs_meta
 sheets
+excluded_sheets
 columns
 rows
 string_cells
 ```
 
-HXS v1 defines no user views, triggers, or indexes.
+HXS v2 defines no user views, triggers, or indexes.
 
 SQLite-owned objects whose names begin with `sqlite_` are not part of the HXS user schema.
 
@@ -126,7 +142,7 @@ Writers enable foreign keys. Atlas creates the artifact using SQLite `journal_mo
 
 ## 6. SQLite schema
 
-The logical HXS v1 schema is:
+The logical HXS v2 schema is:
 
 ```sql
 CREATE TABLE hxs_meta (
@@ -141,7 +157,8 @@ CREATE TABLE hxs_meta (
     lumina_version TEXT NOT NULL,
     sheet_count INTEGER NOT NULL,
     row_count INTEGER NOT NULL,
-    string_cell_count INTEGER NOT NULL
+    string_cell_count INTEGER NOT NULL,
+    excluded_sheet_count INTEGER NOT NULL
 );
 
 CREATE TABLE sheets (
@@ -155,6 +172,11 @@ CREATE TABLE sheets (
     technical_hash BLOB NOT NULL,
     string_hash BLOB NOT NULL,
     content_hash BLOB NOT NULL
+);
+
+CREATE TABLE excluded_sheets (
+    name TEXT PRIMARY KEY,
+    reason INTEGER NOT NULL CHECK (reason IN (1, 2, 3))
 );
 
 CREATE TABLE columns (
@@ -193,7 +215,7 @@ CREATE TABLE string_cells (
 );
 ```
 
-`hxs_meta` must contain exactly one row with `id = 1`.
+`hxs_meta` must contain exactly one row with `id = 1`. `sheet_count` counts stored sheets and `excluded_sheet_count` counts rows of `excluded_sheets`. A sheet name must not appear in both `sheets` and `excluded_sheets`.
 
 All SHA-256 hash BLOBs are exactly 32 bytes.
 
@@ -478,13 +500,18 @@ It is computed as:
 
 ```text
 SHA256(
-    "HARMONIA-HXS-CONTENT-v1"
+    "HARMONIA-HXS-CONTENT-v2"
     + utf8(snapshot_language)
-    + for each sheet ordered by ordinal name:
+    + u32(stored sheet count)
+    + for each stored sheet ordered by ordinal name:
         utf8(sheet.name)
         utf8(sheet.effective_language)
         hash(sheet.schema_hash)
         hash(sheet.content_hash)
+    + u32(excluded sheet count)
+    + for each excluded sheet ordered by ordinal name:
+        utf8(name)
+        u32(reason)
 )
 ```
 
@@ -516,6 +543,7 @@ Consequences:
 - changing String data changes `contentId`;
 - changing schema changes `contentId`;
 - changing sheet effective language changes `contentId`;
+- excluding a sheet, or changing an exclusion reason, changes `contentId`;
 - changing only game version does not change `contentId`.
 
 ## 16. snapshotId
@@ -606,6 +634,7 @@ Verification includes:
 - SQLite `foreign_key_check`;
 - exactly one metadata row;
 - supported HXS format version and `scope = "full"`;
+- valid exclusion reason codes, no sheet both stored and excluded, and the excluded sheet count;
 - sheet column counts;
 - valid sheet variant codes;
 - valid HXS column type codes;
@@ -638,7 +667,7 @@ Do not trust a claimed `contentId` or `snapshotId` without recomputation.
 
 ## 21. Format evolution
 
-HXS v1 constants are format-level commitments:
+HXS v2 constants are format-level commitments:
 
 - SQLite `application_id`;
 - `user_version`;
@@ -653,4 +682,4 @@ HXS v1 constants are format-level commitments:
 
 A change that breaks interpretation or identity compatibility requires a new HXS format version and new hash-domain/version semantics where appropriate.
 
-Producer implementation changes that preserve the HXS v1 contract do not require a format bump.
+Producer implementation changes that preserve the HXS v2 contract do not require a format bump.

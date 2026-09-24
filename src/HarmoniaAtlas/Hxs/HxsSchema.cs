@@ -11,12 +11,14 @@ internal static class HxsSchema
             [
                 "id", "format_version", "game_version", "language", "scope", "content_id", "snapshot_id",
                 "extractor_version", "lumina_version", "sheet_count", "row_count", "string_cell_count",
+                "excluded_sheet_count",
             ],
             ["sheets"] =
             [
                 "id", "name", "variant", "effective_language", "column_count", "row_count", "schema_hash",
                 "technical_hash", "string_hash", "content_hash",
             ],
+            ["excluded_sheets"] = ["name", "reason"],
             ["columns"] = ["sheet_id", "column_index", "offset", "type"],
             ["rows"] = ["sheet_id", "row_id", "subrow_id", "technical_payload", "row_hash", "technical_hash", "string_hash"],
             ["string_cells"] =
@@ -41,7 +43,8 @@ internal static class HxsSchema
                 lumina_version TEXT NOT NULL,
                 sheet_count INTEGER NOT NULL,
                 row_count INTEGER NOT NULL,
-                string_cell_count INTEGER NOT NULL
+                string_cell_count INTEGER NOT NULL,
+                excluded_sheet_count INTEGER NOT NULL
             );
 
             CREATE TABLE sheets (
@@ -55,6 +58,11 @@ internal static class HxsSchema
                 technical_hash BLOB NOT NULL,
                 string_hash BLOB NOT NULL,
                 content_hash BLOB NOT NULL
+            );
+
+            CREATE TABLE excluded_sheets (
+                name TEXT PRIMARY KEY,
+                reason INTEGER NOT NULL CHECK (reason IN (1, 2, 3))
             );
 
             CREATE TABLE columns (

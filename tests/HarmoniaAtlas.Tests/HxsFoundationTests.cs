@@ -5,9 +5,9 @@ namespace HarmoniaAtlas.Tests;
 public sealed class HxsFoundationTests
 {
     [Fact]
-    public void CurrentFormatVersionIsOne()
+    public void CurrentFormatVersionIsTwo()
     {
-        Assert.Equal(1, HxsFormatVersion.Current);
+        Assert.Equal(2, HxsFormatVersion.Current);
         Assert.Equal(HxsFormatVersion.Current, HxsConstants.InitialUserVersion);
         Assert.NotEqual(AtlasApplicationVersion.Current, HxsFormatVersion.Current.ToString());
     }

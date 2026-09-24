@@ -196,10 +196,28 @@ public sealed class SourceGuidanceTests
     }
 
     [Fact]
-    public void EmptyAndNonEmptyValuesCountAsVariance()
+    public void AnEmptySourceTextIsNeverTranslatable()
     {
         string en = CreateSnapshot("en", Sheet("Item", [""]));
         string ja = CreateSnapshot("ja", Sheet("Item", ["こんにちは"]));
+        try
+        {
+            SourceGuidanceSheet sheet = Analyze([en, ja]).Sheets.Single();
+            Assert.Equal(SourceGuidanceSheetStatus.Compatible, sheet.Status);
+            Assert.Empty(sheet.Translatable);
+        }
+        finally
+        {
+            Delete(en);
+            Delete(ja);
+        }
+    }
+
+    [Fact]
+    public void AnEmptyComparisonTextCountsAsVariance()
+    {
+        string en = CreateSnapshot("en", Sheet("Item", ["Hello"]));
+        string ja = CreateSnapshot("ja", Sheet("Item", [""]));
         try
         {
             Assert.Equal(new SourceGuidanceOccurrence(1, 0, 0), Assert.Single(Analyze([en, ja]).Sheets.Single().Translatable));
@@ -638,7 +656,7 @@ public sealed class SourceGuidanceTests
 
             string contentId = HxsHashing.ComputeContentId(language, builtSheets.Select(item => item.Sheet).ToArray());
             session.WriteMetadata(new HxsMetadata(
-                1,
+                HxsFormatVersion.Current,
                 gameVersion,
                 language,
                 scope,
@@ -648,7 +666,8 @@ public sealed class SourceGuidanceTests
                 "7.7.0",
                 builtSheets.Count,
                 builtSheets.Sum(item => (long)item.Rows.Count),
-                builtSheets.Sum(item => (long)item.Rows.Sum(row => row.StringCells.Count))));
+                builtSheets.Sum(item => (long)item.Rows.Sum(row => row.StringCells.Count)),
+                0));
             session.Complete();
         }
 
@@ -709,7 +728,7 @@ public sealed class SourceGuidanceTests
             session.WriteRow(sheetId, row);
             session.CompleteSheet(sheetId, sheet);
             session.WriteMetadata(new HxsMetadata(
-                1,
+                HxsFormatVersion.Current,
                 "game",
                 language,
                 "full",
@@ -719,7 +738,8 @@ public sealed class SourceGuidanceTests
                 "7.7.0",
                 1,
                 1,
-                1));
+                1,
+                0));
             session.Complete();
         }
 

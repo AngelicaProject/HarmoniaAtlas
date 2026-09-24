@@ -61,6 +61,12 @@ public static class CliApplication
             output.WriteLine($"Sheet count: {summary.SheetCount}");
             output.WriteLine($"Row count: {summary.RowCount}");
             output.WriteLine($"String count: {summary.StringCount}");
+            output.WriteLine($"Excluded sheet count: {summary.ExcludedSheets.Count}");
+            foreach (HxsExcludedSheet excluded in summary.ExcludedSheets)
+            {
+                output.WriteLine($"Excluded sheet: {excluded.Name} ({excluded.Reason})");
+            }
+
             output.WriteLine($"Output path: {summary.OutputPath}");
         }
 

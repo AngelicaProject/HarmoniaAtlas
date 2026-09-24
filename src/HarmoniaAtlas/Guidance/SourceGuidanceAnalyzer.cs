@@ -1,3 +1,4 @@
+using HarmoniaAtlas.Game;
 using HarmoniaAtlas.Hxs;
 using HarmoniaAtlas.Model;
 
@@ -61,11 +62,14 @@ public sealed class SourceGuidanceAnalyzer
             .OrderBy(input => input.Language, StringComparer.Ordinal)
             .Select(input => new OpenInput(input))
             .ToList();
+        // A sheet that no input could read has no schema to report and grants
+        // nothing, so only sheets present in at least one input are listed.
         string[] sheetNames = openInputs
             .SelectMany(input => input.Sheets.Keys)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
+        int sourceIndex = openInputs.FindIndex(input => ReferenceEquals(input.Source, source));
         Dictionary<string, SourceGuidanceSheet> guidanceSheets = new(StringComparer.Ordinal);
 
         try
@@ -91,22 +95,26 @@ public sealed class SourceGuidanceAnalyzer
                     continue;
                 }
 
-                bool rowsCompatible = ScanComparable(
+                ScanResult scan = ScanComparable(
                     sheetName,
                     analysis.Sheet.Columns,
                     presentInputs,
+                    presentInputs.IndexOf(openInputs[sourceIndex]),
                     sheetIndex,
                     sheetNames.Length,
                     progress,
                     out List<SourceGuidanceOccurrence> translatable);
-                guidanceSheets.Add(sheetName, rowsCompatible
-                    ? new SourceGuidanceSheet(
+                guidanceSheets.Add(sheetName, scan switch
+                {
+                    ScanResult.Compatible => new SourceGuidanceSheet(
                         sheetName,
                         SourceGuidanceHashing.ToHashString(analysis.Sheet.SchemaHash),
                         SourceGuidanceSheetStatus.Compatible,
                         translatable,
-                        Array.Empty<SourceGuidanceIncompatibilityReason>())
-                    : IncompatibleSheet(analysis.Sheet, [SourceGuidanceIncompatibilityReason.RowTopologyMismatch]));
+                        Array.Empty<SourceGuidanceIncompatibilityReason>()),
+                    ScanResult.TopologyMismatch => IncompatibleSheet(analysis.Sheet, [SourceGuidanceIncompatibilityReason.RowTopologyMismatch]),
+                    _ => IncompatibleSheet(analysis.Sheet, [SourceGuidanceIncompatibilityReason.UnreadableInInput]),
+                });
             }
 
             if (source.ContentId is null || source.SnapshotId is null)
@@ -171,9 +179,11 @@ public sealed class SourceGuidanceAnalyzer
             : presentInputs[0];
         GuidanceSheetMetadata representative = representativeInput.Sheets[sheetName];
         List<SourceGuidanceIncompatibilityReason> reasons = new();
-        if (presentInputs.Count != allInputs.Count)
+        foreach (OpenInput input in allInputs.Where(input => !input.Sheets.ContainsKey(sheetName)))
         {
-            reasons.Add(SourceGuidanceIncompatibilityReason.MissingInInput);
+            reasons.Add(input.Source.UnreadableSheets.Contains(sheetName)
+                ? SourceGuidanceIncompatibilityReason.UnreadableInInput
+                : SourceGuidanceIncompatibilityReason.MissingInInput);
         }
 
         foreach (OpenInput input in presentInputs)
@@ -221,20 +231,34 @@ public sealed class SourceGuidanceAnalyzer
     {
         long rowsProcessed = 0;
         long lastProgressTimestamp = Environment.TickCount64;
-        foreach (GuidanceStringRow row in input.Source.ReadStringRows(sheetName))
+        try
         {
-            AddEvidenceRow(input.Hasher, row);
-            rowsProcessed++;
-            EmitProgress(input, sheetName, sheetIndex, sheetCount, rowsProcessed, ref lastProgressTimestamp, progress);
+            foreach (GuidanceStringRow row in input.Source.ReadStringRows(sheetName))
+            {
+                AddEvidenceRow(input.Hasher, row);
+                rowsProcessed++;
+                EmitProgress(input, sheetName, sheetIndex, sheetCount, rowsProcessed, ref lastProgressTimestamp, progress);
+            }
+        }
+        catch (SheetReadException)
+        {
+            // The sheet is already incompatible; its evidence ends where the
+            // input stopped being readable.
         }
 
         progress?.Invoke(new GuidanceScanProgress(input.Source.Language, sheetName, sheetIndex + 1, sheetCount, rowsProcessed));
     }
 
-    private static bool ScanComparable(
+    /// <summary>
+    /// Compares one compatible sheet row by row. An occurrence is translatable
+    /// when its source text is not empty and at least one input differs from
+    /// the others.
+    /// </summary>
+    private static ScanResult ScanComparable(
         string sheetName,
         IReadOnlyList<HarmoniaColumnDefinition> columns,
         IReadOnlyList<OpenInput> inputs,
+        int sourceIndex,
         int sheetIndex,
         int sheetCount,
         Action<GuidanceScanProgress>? progress,
@@ -252,16 +276,27 @@ public sealed class SourceGuidanceAnalyzer
         long[] rowsProcessed = new long[inputs.Count];
         long[] lastProgressTimestamps = Enumerable.Repeat(Environment.TickCount64, inputs.Count).ToArray();
         bool topologyIsCompatible = true;
+        bool readable = true;
         try
         {
-            while (true)
+            while (readable)
             {
                 GuidanceStringRow?[] currentRows = new GuidanceStringRow?[inputs.Count];
                 bool anyMoved = false;
                 bool allMoved = true;
                 for (int index = 0; index < enumerators.Count; index++)
                 {
-                    bool moved = enumerators[index].MoveNext();
+                    bool moved;
+                    try
+                    {
+                        moved = enumerators[index].MoveNext();
+                    }
+                    catch (SheetReadException)
+                    {
+                        readable = false;
+                        break;
+                    }
+
                     anyMoved |= moved;
                     allMoved &= moved;
                     if (moved)
@@ -271,7 +306,7 @@ public sealed class SourceGuidanceAnalyzer
                     }
                 }
 
-                if (!anyMoved)
+                if (!readable || !anyMoved)
                 {
                     break;
                 }
@@ -315,7 +350,9 @@ public sealed class SourceGuidanceAnalyzer
                         cellIndexes[inputIndex] = cellIndex + 1;
                     }
 
-                    if (topologyIsCompatible && macroTexts.Skip(1).Any(value => !string.Equals(macroTexts[0], value, StringComparison.Ordinal)))
+                    if (topologyIsCompatible &&
+                        macroTexts[sourceIndex].Length != 0 &&
+                        macroTexts.Skip(1).Any(value => !string.Equals(macroTexts[0], value, StringComparison.Ordinal)))
                     {
                         translatable.Add(new SourceGuidanceOccurrence(currentRows[0]!.RowId, currentRows[0]!.SubrowId, columnIndex));
                     }
@@ -341,12 +378,21 @@ public sealed class SourceGuidanceAnalyzer
             progress?.Invoke(new GuidanceScanProgress(input.Source.Language, sheetName, sheetIndex + 1, sheetCount, rowsProcessed[inputIndex]));
         }
 
-        if (!topologyIsCompatible)
+        if (!readable || !topologyIsCompatible)
         {
             translatable.Clear();
         }
 
-        return topologyIsCompatible;
+        return !readable
+            ? ScanResult.Unreadable
+            : topologyIsCompatible ? ScanResult.Compatible : ScanResult.TopologyMismatch;
+    }
+
+    private enum ScanResult
+    {
+        Compatible,
+        TopologyMismatch,
+        Unreadable,
     }
 
     private static void AddEvidenceRow(SourceGuidanceEvidenceHasher hasher, GuidanceStringRow row)

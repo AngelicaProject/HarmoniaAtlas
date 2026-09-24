@@ -119,13 +119,21 @@ sheetVariantMismatch
 columnDefinitionMismatch
 schemaHashMismatch
 rowTopologyMismatch
+unreadableInInput
 ```
+
+`unreadableInInput` means that an input lists the sheet as excluded or that the sheet failed while being read. A sheet that no input could read has no schema to report and is omitted from `sheets`.
 
 A sheet whose effective specific language differs from the requested evidence language is incompatible and has an empty `translatable` array. Its physical String rows still participate in that input's `evidenceId`.
 
 ## Translatable occurrence rule
 
-For a compatible sheet, Atlas compares exact `macro_text` values at each physical row/subrow/column coordinate across all selected evidence languages. If the values are not all equal under ordinal comparison, that occurrence is added to `translatable`. Otherwise it is absent and read-only.
+For a compatible sheet, Atlas compares exact `macro_text` values at each physical row/subrow/column coordinate across all selected evidence languages. An occurrence is added to `translatable` when:
+
+1. its `macro_text` in the source language is not empty; and
+2. the values are not all equal under ordinal comparison.
+
+Otherwise it is absent and read-only. An empty source text has nothing to translate even when another language has text there.
 
 The comparison is exact:
 
@@ -137,7 +145,7 @@ The comparison is exact:
 - no identifier heuristics;
 - raw-value differences alone do not grant permission.
 
-An empty string is a source value. Empty versus non-empty is real variance. One differing language is sufficient.
+An empty comparison value is a source value: a non-empty source text next to an empty comparison value is real variance. One differing language is sufficient.
 
 ## Applying guidance to a snapshot
 
