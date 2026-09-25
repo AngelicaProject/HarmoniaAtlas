@@ -3,6 +3,7 @@ using HarmoniaAtlas.Extraction;
 using HarmoniaAtlas.Guidance;
 using HarmoniaAtlas.Hxs;
 using HarmoniaAtlas.Package;
+using HarmoniaAtlas.Strings;
 
 namespace HarmoniaAtlas.Cli;
 
@@ -28,8 +29,19 @@ public static class CliApplication
             CliCommand.Inspect => RunInspect(options, output),
             CliCommand.Guidance => RunGuidance(options, output),
             CliCommand.Package => RunPackage(options, output, diagnostics),
+            CliCommand.Encode => RunEncode(options, output),
             _ => throw new InvalidOperationException("No executable CLI command was selected."),
         };
+    }
+
+    private static int RunEncode(CliOptions options, TextWriter output)
+    {
+        MacroEncodeSummary summary = MacroStringEncoder.EncodeFile(options.InputPath!, options.OutputPath!);
+        output.WriteLine(JsonSerializer.Serialize(summary, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        }));
+        return 0;
     }
 
     private static int RunVersion(TextWriter output)

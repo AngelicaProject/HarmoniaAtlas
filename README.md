@@ -123,6 +123,16 @@ An exact String occurrence is writable only when compatible official-language sn
 
 The sidecar format and its fail-closed rules are specified in [`docs/SOURCE_GUIDANCE_FORMAT.md`](docs/SOURCE_GUIDANCE_FORMAT.md).
 
+Encode translated macro text into the `SeString` bytes the game reads. Aeria uses this when it exports a Harmonia pack:
+
+```bash
+dotnet run --project src/HarmoniaAtlas -- encode \
+  --input requests.jsonl \
+  --output results.jsonl
+```
+
+Each input line is `{"macro": "<macro text>"}` in the `macro_text` syntax. The output has one line per input line, in the same order: `{"hex": "<encoded bytes>"}` on success, or `{"error": "<code>", "message": "..."}`. Error codes are `empty`, `invalidMacro`, `containsNul`, `tooLong` (more than 65535 bytes), and `notRoundTrip` (decoding the bytes and encoding the result again gives different bytes). Numbers may be written in any form Lumina accepts; the check is on bytes, not on text. A malformed input line fails the whole command and no output file is written. On success stdout contains `{"encoded": n, "failed": m}`.
+
 Extraction also supports `--json` for structured command output. Diagnostics are written to stderr; command output is written to stdout.
 
 ## Building and testing

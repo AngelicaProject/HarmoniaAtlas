@@ -9,6 +9,7 @@ public enum CliCommand
     Inspect,
     Guidance,
     Package,
+    Encode,
 }
 
 public sealed record CliOptions(
@@ -19,7 +20,8 @@ public sealed record CliOptions(
     bool Json = false,
     bool EventsJsonl = false,
     string? SourcePath = null,
-    IReadOnlyList<string>? ComparePaths = null);
+    IReadOnlyList<string>? ComparePaths = null,
+    string? InputPath = null);
 
 public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, string? Error)
 {
@@ -32,13 +34,14 @@ public sealed record CliParseResult(CliCommand? Command, CliOptions? Options, st
 
 public static class CliUsage
 {
-    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect|guidance|package> [options]" + Environment.NewLine +
+    public static readonly string Text = "Usage: harmonia-atlas <extract|verify|inspect|guidance|package|encode> [options]" + Environment.NewLine +
                                          "  harmonia-atlas --version" + Environment.NewLine +
                                          "  extract --game-path <path> --language <language> --output <path> [--json]" + Environment.NewLine +
                                          "  verify <path.hxs>" + Environment.NewLine +
                                          "  inspect <path.hxs> [--json]" + Environment.NewLine +
                                          "  guidance --source <path.hxs> --compare <path.hxs> --output <path.hsg.json> [--json]" + Environment.NewLine +
-                                         "  package --game-path <path> --language <language> --output <path.hsp> [--events jsonl]";
+                                         "  package --game-path <path> --language <language> --output <path.hsp> [--events jsonl]" + Environment.NewLine +
+                                         "  encode --input <requests.jsonl> --output <results.jsonl>";
 }
 
 public static class CommandLineParser
@@ -64,6 +67,7 @@ public static class CommandLineParser
             "inspect" => ParseInspect(args),
             "guidance" => ParseGuidance(args),
             "package" => ParsePackage(args),
+            "encode" => ParseEncode(args),
             _ => CliParseResult.Failure($"unknown command '{args[0]}'"),
         };
     }
@@ -248,6 +252,50 @@ public static class CommandLineParser
             new CliOptions(OutputPath: outputPath, Json: json, SourcePath: sourcePath, ComparePaths: comparePaths));
     }
 
+    private static CliParseResult ParseEncode(IReadOnlyList<string> args)
+    {
+        string? inputPath = null;
+        string? outputPath = null;
+
+        for (int index = 1; index < args.Count; index++)
+        {
+            string option = args[index];
+            if (!TryReadValue(args, ref index, option, out string? value, out string? error))
+            {
+                return CliParseResult.Failure(error!);
+            }
+
+            switch (option)
+            {
+                case "--input":
+                    if (inputPath is not null)
+                    {
+                        return CliParseResult.Failure("--input was specified more than once");
+                    }
+
+                    inputPath = value;
+                    break;
+                case "--output":
+                    if (outputPath is not null)
+                    {
+                        return CliParseResult.Failure("--output was specified more than once");
+                    }
+
+                    outputPath = value;
+                    break;
+                default:
+                    return CliParseResult.Failure($"unknown encode option '{option}'");
+            }
+        }
+
+        if (inputPath is null || outputPath is null)
+        {
+            return CliParseResult.Failure("encode requires --input and --output");
+        }
+
+        return CliParseResult.Success(CliCommand.Encode, new CliOptions(OutputPath: outputPath, InputPath: inputPath));
+    }
+
     private static CliParseResult ParsePackage(IReadOnlyList<string> args)
     {
         string? gamePath = null;
@@ -335,7 +383,7 @@ public static class CommandLineParser
         value = null;
         error = null;
 
-        if (option is not ("--game-path" or "--language" or "--output" or "--source" or "--compare"))
+        if (option is not ("--game-path" or "--language" or "--output" or "--source" or "--compare" or "--input"))
         {
             return true;
         }
